@@ -12,7 +12,9 @@ dependencies = [
   "celery[redis]>=5.4,<6",
   "docker>=7.0,<8",
   "fastapi>=0.116,<1",
+  "jsonschema>=4.25,<5",
   "pydantic>=2.8,<3",
+  "PyYAML>=6.0,<7",
   "uvicorn>=0.30,<1",
 ]
 
@@ -43,6 +45,10 @@ plugins = []
 
 [[tool.mypy.overrides]]
 module = ["celery.*", "docker.*", "fakeredis.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["yaml", "yaml.*", "jsonschema", "jsonschema.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

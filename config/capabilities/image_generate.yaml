@@ -1,0 +1,13 @@
+capability_id: image.generate
+method: POST
+path: /image/generate
+summary: Generate an image
+request_schema: requests/image_generate.request.json
+response_schema: responses/job_accepted.response.json
+execution_mode: async
+queue_lane: gpu
+adapter_type: noop_stub
+default_service_selection: mock-image-generator
+docs_examples:
+  - prompt: studio portrait
+    style: cinematic

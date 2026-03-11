@@ -2,87 +2,106 @@
 
 One API, one scarce GPU, many tools.
 
-Turnstile Milestone 1 is a minimal runnable scaffold for a resource-aware API
-broker. It includes:
+Turnstile is a typed capability broker for scarce local compute. Public
+endpoints are registered from YAML capability definitions, validated by JSON
+Schema, and dispatched through adapter types rather than hardcoded one-off
+routes or a generic passthrough proxy.
 
-- FastAPI app with typed endpoints
-- Celery worker wired to a dedicated `gpu` queue
-- Redis-backed broker/result backend configuration
-- Flower in `docker-compose`
-- in-memory service registry and job metadata store
-- Docker SDK runtime abstraction scaffold, without real container launching
+## How It Works
+
+- Capabilities live in `config/capabilities/*.yaml`
+- Service definitions live in `config/services/*.yaml`
+- Config formats are validated by JSON Schema in `config/schemas/*.json`
+- Request and response payloads are backed by JSON Schemas in
+  `config/requests/*.json` and `config/responses/*.json`
+- FastAPI routes are generated from capability definitions at startup
+- Jobs and GPU arbitration state live in Redis with TTLs
+- Celery executes async jobs on named lanes like `gpu` and `cpu`
+- Backend invocation is selected by adapter type:
+  - `noop_stub`
+  - `http_forward_json`
+  - `container_command`
+
+## Current Endpoints
+
+- `GET /healthz`
+- `GET /v1/services`
+- `GET /v1/jobs/{job_id}`
+- `POST /v1/jobs/{job_id}/cancel`
+- `POST /v1/image/generate`
+- `POST /v1/audio/transcribe`
+- `GET /ops/runtime`
+- `GET /docs`
+- `GET /redoc`
+- `GET /openapi.json`
 
 ## Local Development
 
-### 1. Create an environment
-
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+conda activate turnstile_env
 pip install -e '.[dev]'
 cp .env.example .env
 ```
 
-### 2. Run with Docker Compose
+Run everything with Docker Compose:
 
 ```bash
 docker compose up --build
 ```
 
-### 3. Run components manually
-
-Terminal 1:
+Or run components manually:
 
 ```bash
 make dev
-```
-
-Terminal 2:
-
-```bash
 make worker
-```
-
-Terminal 3:
-
-```bash
 make flower
 ```
 
-## Local Endpoints
+## Example Requests
 
-- API: `http://localhost:8000`
-- OpenAPI docs: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-- Health: `GET http://localhost:8000/healthz`
-- Services: `GET http://localhost:8000/v1/services`
-- Job status: `GET http://localhost:8000/v1/jobs/{job_id}`
-- Submit image generation: `POST http://localhost:8000/v1/image/generate`
-- Ops runtime snapshot: `GET http://localhost:8000/ops/runtime`
-- Flower: `http://localhost:5555`
-
-## Example Request
+Image generation:
 
 ```bash
 curl -X POST http://localhost:8000/v1/image/generate \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"studio portrait"}'
+  -d '{"prompt":"studio portrait","style":"cinematic"}'
 ```
 
-Expected response:
-
-```json
-{
-  "job_id": "c7c7fe5f-7bf9-45e0-850f-f0935b334fe8",
-  "status": "queued"
-}
-```
-
-Then query:
+Audio transcription:
 
 ```bash
-curl http://localhost:8000/v1/jobs/c7c7fe5f-7bf9-45e0-850f-f0935b334fe8
+curl -X POST http://localhost:8000/v1/audio/transcribe \
+  -H 'Content-Type: application/json' \
+  -d '{"audio_url":"https://example.com/clip.wav","language":"en"}'
 ```
+
+Cancel a queued job:
+
+```bash
+curl -X POST http://localhost:8000/v1/jobs/<job_id>/cancel
+```
+
+## Adding a Capability
+
+1. Add a request schema in `config/requests/`
+2. Add or reuse a response schema in `config/responses/`
+3. Add a capability definition in `config/capabilities/`
+4. Point it at an adapter type and default service
+5. Add or update a service entry in `config/services/`
+6. Restart the API and verify the route appears in `/openapi.json`
+
+## Adding a Service
+
+Each service definition declares:
+
+- supported `capabilities`
+- `mode` (`warm` or `ephemeral`)
+- `adapter_type`
+- `adapter_config`
+- GPU and lifecycle metadata
+
+The API surface stays stable; only the capability and service definitions
+change.
 
 ## Commands
 

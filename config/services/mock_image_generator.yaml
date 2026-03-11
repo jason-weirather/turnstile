@@ -1,0 +1,15 @@
+service_id: mock-image-generator
+capabilities:
+  - image.generate
+mode: ephemeral
+image: ghcr.io/example/mock-image-generator:latest
+gpu_required: true
+estimated_vram_mb: 4096
+startup_timeout_s: 30
+idle_ttl_s: 300
+healthcheck:
+  type: none
+adapter_type: noop_stub
+adapter_config: {}
+cancel_strategy: celery_revoke
+eviction_priority: 10

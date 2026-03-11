@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "capability_id",
+    "method",
+    "path",
+    "summary",
+    "request_schema",
+    "response_schema",
+    "execution_mode",
+    "queue_lane",
+    "adapter_type",
+    "default_service_selection"
+  ],
+  "properties": {
+    "capability_id": { "type": "string", "minLength": 1 },
+    "method": { "type": "string", "enum": ["GET", "POST"] },
+    "path": { "type": "string", "pattern": "^/" },
+    "summary": { "type": "string", "minLength": 1 },
+    "request_schema": { "type": "string", "minLength": 1 },
+    "response_schema": { "type": "string", "minLength": 1 },
+    "execution_mode": { "type": "string", "enum": ["sync", "async"] },
+    "queue_lane": { "type": "string", "enum": ["gpu", "cpu"] },
+    "adapter_type": {
+      "type": "string",
+      "enum": ["noop_stub", "http_forward_json", "container_command"]
+    },
+    "default_service_selection": { "type": "string", "minLength": 1 },
+    "docs_examples": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  }
+}

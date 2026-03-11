@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from functools import lru_cache
-from typing import cast
+from typing import Any, cast
 
 import redis
 
 from app.core.config import get_settings
+from app.models.capability import QueueLane
 from app.models.job import JobRecord, JobStatus
 from app.models.ops import OpsSnapshot
 
@@ -30,8 +32,9 @@ class RedisJobStore:
         payload = job.model_dump_json()
         pipeline = self._client.pipeline()
         pipeline.set(self._job_key(job.job_id), payload, ex=self._job_ttl_s)
-        pipeline.rpush(self.GPU_QUEUE_KEY, job.job_id)
-        pipeline.expire(self.GPU_QUEUE_KEY, self._job_ttl_s)
+        if job.queue_lane == QueueLane.GPU:
+            pipeline.rpush(self.GPU_QUEUE_KEY, job.job_id)
+            pipeline.expire(self.GPU_QUEUE_KEY, self._job_ttl_s)
         pipeline.execute()
 
     def get(self, job_id: str) -> JobRecord | None:
@@ -45,18 +48,33 @@ class RedisJobStore:
         job_id: str,
         status: JobStatus,
         *,
-        result: dict[str, str] | None = None,
-        error: str | None = None,
+        result_payload: dict[str, Any] | None = None,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        container_id: str | None = None,
     ) -> JobRecord | None:
         job = self.get(job_id)
         if job is None:
             return None
 
+        started_at = job.started_at
+        finished_at = job.finished_at
+        if status == JobStatus.RUNNING and started_at is None:
+            started_at = datetime.now(timezone.utc)
+        if status in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}:
+            finished_at = datetime.now(timezone.utc)
+
         updated = job.model_copy(
             update={
                 "status": status,
-                "result": result if result is not None else job.result,
-                "error": error,
+                "result_payload": (
+                    result_payload if result_payload is not None else job.result_payload
+                ),
+                "error_code": error_code,
+                "error_detail": error_detail,
+                "container_id": container_id if container_id is not None else job.container_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
             }
         )
         self._client.set(self._job_key(job_id), updated.model_dump_json(), ex=self._job_ttl_s)
@@ -74,11 +92,26 @@ class RedisJobStore:
             if queue_head == job_id and self._try_acquire_gpu_slot(job_id, service_id):
                 self._client.lrem(self.GPU_QUEUE_KEY, 1, job_id)
                 self._client.expire(self.GPU_QUEUE_KEY, self._job_ttl_s)
-                self.set_status(job_id, JobStatus.RUNNING, error=None)
+                self.set_status(job_id, JobStatus.RUNNING, error_detail=None)
                 return
 
-            self.set_status(job_id, JobStatus.WAITING_FOR_GPU, error=None)
+            self.set_status(job_id, JobStatus.WAITING_FOR_GPU, error_detail=None)
             time.sleep(self._poll_interval_s)
+
+    def cancel(self, job_id: str) -> JobRecord | None:
+        job = self.get(job_id)
+        if job is None:
+            return None
+
+        if job.queue_lane == QueueLane.GPU:
+            self._client.lrem(self.GPU_QUEUE_KEY, 0, job_id)
+        self.release_gpu_slot(job_id)
+        return self.set_status(
+            job_id,
+            JobStatus.CANCELLED,
+            error_code="cancelled",
+            error_detail="Cancelled by user request.",
+        )
 
     def release_gpu_slot(self, job_id: str) -> None:
         if self._client.get(self.GPU_ACTIVE_JOB_KEY) == job_id:

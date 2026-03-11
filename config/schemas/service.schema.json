@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "service_id",
+    "capabilities",
+    "mode",
+    "image",
+    "gpu_required",
+    "estimated_vram_mb",
+    "startup_timeout_s",
+    "idle_ttl_s",
+    "adapter_type",
+    "adapter_config",
+    "cancel_strategy",
+    "eviction_priority"
+  ],
+  "properties": {
+    "service_id": { "type": "string", "minLength": 1 },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "mode": { "type": "string", "enum": ["warm", "ephemeral"] },
+    "image": { "type": "string", "minLength": 1 },
+    "gpu_required": { "type": "boolean" },
+    "estimated_vram_mb": { "type": "integer", "minimum": 0 },
+    "startup_timeout_s": { "type": "integer", "minimum": 1 },
+    "idle_ttl_s": { "type": "integer", "minimum": 1 },
+    "healthcheck": { "type": "object" },
+    "adapter_type": {
+      "type": "string",
+      "enum": ["noop_stub", "http_forward_json", "container_command"]
+    },
+    "adapter_config": { "type": "object" },
+    "cancel_strategy": { "type": "string", "minLength": 1 },
+    "eviction_priority": { "type": "integer" }
+  }
+}

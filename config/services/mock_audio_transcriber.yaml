@@ -1,0 +1,23 @@
+service_id: mock-audio-transcriber
+capabilities:
+  - audio.transcribe
+mode: ephemeral
+image: ghcr.io/example/mock-audio-transcriber:latest
+gpu_required: false
+estimated_vram_mb: 0
+startup_timeout_s: 30
+idle_ttl_s: 300
+healthcheck:
+  type: none
+adapter_type: container_command
+adapter_config:
+  command:
+    - python3
+    - -c
+    - |
+      import json, sys
+      payload = json.load(sys.stdin)
+      print(json.dumps({"text": f"transcribed:{payload['audio_url']}", "language": payload.get("language", "auto")}))
+  timeout_s: 5
+cancel_strategy: celery_revoke
+eviction_priority: 20
