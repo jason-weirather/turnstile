@@ -37,3 +37,56 @@ def test_runtime_dependencies_include_httpx_and_flower() -> None:
 
     assert any(dependency.startswith("httpx") for dependency in dependencies)
     assert any(dependency.startswith("flower") for dependency in dependencies)
+
+
+def test_example_backend_assets_and_make_targets_exist() -> None:
+    root = Path(__file__).resolve().parents[1]
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+
+    assert (root / "examples" / "backends" / "mock_http_tool" / "Dockerfile").exists()
+    assert (root / "examples" / "backends" / "mock_http_tool" / "app.py").exists()
+    assert (root / "examples" / "backends" / "mock_command_tool" / "Dockerfile").exists()
+    assert (root / "examples" / "backends" / "mock_command_tool" / "main.py").exists()
+    assert (root / "docker-compose.examples.yml").exists()
+    assert (root / "docs" / "testing-backends.md").exists()
+
+    for target in (
+        "build-example-backends:",
+        "build-mock-http-tool:",
+        "build-mock-command-tool:",
+        "run-mock-http-alpha:",
+        "run-mock-http-beta:",
+    ):
+        assert target in makefile
+
+
+def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() -> None:
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    testing_doc = (root / "docs" / "testing-backends.md").read_text(encoding="utf-8")
+    services_dir = root / "config" / "services"
+
+    http_alpha = yaml.safe_load((services_dir / "mock_http_alpha.yaml").read_text(encoding="utf-8"))
+    http_beta = yaml.safe_load((services_dir / "mock_http_beta.yaml").read_text(encoding="utf-8"))
+    command_alpha = yaml.safe_load(
+        (services_dir / "mock_command_alpha.yaml").read_text(encoding="utf-8")
+    )
+    command_beta = yaml.safe_load(
+        (services_dir / "mock_command_beta.yaml").read_text(encoding="utf-8")
+    )
+
+    assert http_alpha["image"] == "turnstile/mock-http-tool:latest"
+    assert http_beta["image"] == "turnstile/mock-http-tool:latest"
+    assert command_alpha["image"] == "turnstile/mock-command-tool:latest"
+    assert command_beta["image"] == "turnstile/mock-command-tool:latest"
+
+    for text in (
+        "turnstile/mock-http-tool:latest",
+        "turnstile/mock-command-tool:latest",
+        "build-example-backends",
+        "/v1/example/http/echo",
+        "/v1/example/command/run",
+        "service_id",
+    ):
+        assert text in readme
+        assert text in testing_doc

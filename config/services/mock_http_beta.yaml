@@ -1,0 +1,28 @@
+service_id: mock-http-beta
+capabilities:
+  - example.http.echo
+mode: warm
+image: turnstile/mock-http-tool:latest
+gpu_required: true
+estimated_vram_mb: 512
+startup_timeout_s: 30
+idle_ttl_s: 120
+healthcheck:
+  type: http
+  path: /healthz
+  expected_status: 200
+  timeout_s: 2
+adapter_type: http_forward_json
+adapter_config:
+  container_port: 8000
+  path: /invoke
+  method: POST
+  timeout_s: 30
+  cancel_path: /cancel
+  env:
+    MOCK_INSTANCE_ID: beta
+    MOCK_DEFAULT_SLEEP_S: "0"
+    MOCK_RESPONSE_PREFIX: "beta:"
+    MOCK_TAG_COLOR: blue
+cancel_strategy: http_request_cancel
+eviction_priority: 20

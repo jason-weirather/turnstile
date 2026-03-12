@@ -1,0 +1,21 @@
+service_id: mock-command-beta
+capabilities:
+  - example.command.run
+mode: ephemeral
+image: turnstile/mock-command-tool:latest
+gpu_required: false
+estimated_vram_mb: 0
+startup_timeout_s: 30
+idle_ttl_s: 120
+healthcheck:
+  type: none
+adapter_type: container_command
+adapter_config:
+  timeout_s: 30
+  result_file: result.json
+  env:
+    MOCK_INSTANCE_ID: command-beta
+    MOCK_DEFAULT_SLEEP_S: "0"
+    MOCK_OUTPUT_BASENAME: beta-output
+cancel_strategy: container_stop
+eviction_priority: 40

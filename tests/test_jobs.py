@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -108,3 +109,47 @@ def test_cancel_queued_job() -> None:
     job_response = client.get(f"/v1/jobs/{job_id}")
     assert job_response.status_code == 200
     assert job_response.json()["status"] == "cancelled"
+
+
+def test_failed_example_command_job_sets_failed_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = job_store_module.get_job_store()
+    service = get_service_registry().resolve_for_capability(
+        "example.command.run",
+        service_id="mock-command-alpha",
+    )
+    job = JobRecord(
+        job_id="job-fail",
+        capability="example.command.run",
+        queue_lane=QueueLane.CPU,
+        requested_service_id=service.service_id,
+        selected_service_id=service.service_id,
+        request_payload={"fail": True},
+    )
+    store.enqueue(job)
+
+    class FailingAdapter:
+        def execute(self, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("forced failure")
+
+    class Registry:
+        def get(self, adapter_type: str) -> FailingAdapter:
+            assert adapter_type == service.adapter_type.value
+            return FailingAdapter()
+
+    monkeypatch.setattr(orchestrator, "get_adapter_registry", lambda: Registry())
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        orchestrator.run_capability_job(
+            job_id="job-fail",
+            capability_id="example.command.run",
+            payload={"fail": True},
+            service_id=service.service_id,
+        )
+
+    failed_job = store.get("job-fail")
+    assert failed_job is not None
+    assert failed_job.status == JobStatus.FAILED
+    assert failed_job.error_code == "execution_failed"

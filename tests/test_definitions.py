@@ -42,10 +42,42 @@ def test_repo_config_examples_load_and_validate() -> None:
     services = loader.load_services()
 
     assert {capability.capability_id for capability in capabilities} >= {
+        "example.http.echo",
+        "example.command.run",
         "image.generate",
         "audio.transcribe",
     }
     assert {service.service_id for service in services} >= {
+        "mock-http-alpha",
+        "mock-http-beta",
+        "mock-command-alpha",
         "mock-image-generator",
         "mock-audio-transcriber",
     }
+
+
+def test_generic_example_services_reuse_shared_backend_images() -> None:
+    root = Path(__file__).resolve().parents[1]
+    loader = DefinitionLoader(
+        capabilities_dir=root / "config" / "capabilities",
+        services_dir=root / "config" / "services",
+        schemas_dir=root / "config" / "schemas",
+    )
+
+    capabilities = {
+        capability.capability_id: capability for capability in loader.load_capabilities()
+    }
+    services = {service.service_id: service for service in loader.load_services()}
+
+    assert capabilities["example.http.echo"].path == "/example/http/echo"
+    assert capabilities["example.command.run"].path == "/example/command/run"
+
+    assert services["mock-http-alpha"].image == "turnstile/mock-http-tool:latest"
+    assert services["mock-http-beta"].image == "turnstile/mock-http-tool:latest"
+    assert services["mock-http-alpha"].capabilities == ["example.http.echo"]
+    assert services["mock-http-beta"].capabilities == ["example.http.echo"]
+
+    assert services["mock-command-alpha"].image == "turnstile/mock-command-tool:latest"
+    assert services["mock-command-beta"].image == "turnstile/mock-command-tool:latest"
+    assert services["mock-command-alpha"].capabilities == ["example.command.run"]
+    assert services["mock-command-beta"].capabilities == ["example.command.run"]

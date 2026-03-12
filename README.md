@@ -36,6 +36,8 @@ Static routes:
 
 YAML-defined example capability routes shipped in this repo:
 
+- `POST /v1/example/http/echo`
+- `POST /v1/example/command/run`
 - `POST /v1/image/generate`
 - `POST /v1/audio/transcribe`
 
@@ -81,6 +83,7 @@ Compose declares an explicit `turnstile` bridge network. Managed warm containers
 conda activate turnstile_env
 pip install -e '.[dev]'
 cp .env.example .env
+make build-example-backends
 make dev
 make worker-gpu
 make worker-cpu
@@ -107,6 +110,62 @@ Ephemeral command services:
 - After completion, Turnstile downloads `/turnstile/output` back out of the container and records artifacts from that extracted output.
 
 More deployment notes live in [docs/deployment.md](docs/deployment.md).
+Example backend details live in [docs/testing-backends.md](docs/testing-backends.md).
+
+## Example Testing Backends
+
+Turnstile now ships two reusable example backend images inside this repo:
+
+- `turnstile/mock-http-tool:latest`
+  - source: `examples/backends/mock_http_tool/`
+  - used by `mock-http-alpha` and `mock-http-beta`
+- `turnstile/mock-command-tool:latest`
+  - source: `examples/backends/mock_command_tool/`
+  - used by `mock-command-alpha` and `mock-command-beta`
+
+Build them with:
+
+```bash
+make build-example-backends
+```
+
+These are normal backend services. They are not special-cased in FastAPI or the adapter layer.
+
+## Generic Examples
+
+Generic capability definitions:
+
+- `config/capabilities/example_http_echo.yaml`
+- `config/capabilities/example_command_run.yaml`
+
+Generic service definitions:
+
+- `config/services/mock_http_alpha.yaml`
+- `config/services/mock_http_beta.yaml`
+- `config/services/mock_command_alpha.yaml`
+- `config/services/mock_command_beta.yaml`
+
+The two HTTP services use the same image and differ only by `service_id` plus env:
+
+```yaml
+service_id: mock-http-alpha
+image: turnstile/mock-http-tool:latest
+adapter_config:
+  env:
+    MOCK_INSTANCE_ID: alpha
+    MOCK_RESPONSE_PREFIX: "alpha:"
+```
+
+```yaml
+service_id: mock-http-beta
+image: turnstile/mock-http-tool:latest
+adapter_config:
+  env:
+    MOCK_INSTANCE_ID: beta
+    MOCK_RESPONSE_PREFIX: "beta:"
+```
+
+That is the intended scaling model. To add another instance, copy a service YAML, keep the same image, and change only `service_id` and env.
 
 ## Adding a Capability
 
@@ -118,6 +177,8 @@ More deployment notes live in [docs/deployment.md](docs/deployment.md).
 
 Shipped capability examples:
 
+- `config/capabilities/example_http_echo.yaml`
+- `config/capabilities/example_command_run.yaml`
 - `config/capabilities/image_generate.yaml`
 - `config/capabilities/audio_transcribe.yaml`
 
@@ -202,6 +263,30 @@ adapter_config:
 
 ## Examples
 
+Submit a generic warm HTTP-backed job to the default service:
+
+```bash
+curl -X POST http://localhost:8000/v1/example/http/echo \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"hello warm world"}'
+```
+
+Submit the same request to a specific backend instance:
+
+```bash
+curl -X POST http://localhost:8000/v1/example/http/echo \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"hello beta","service_id":"mock-http-beta"}'
+```
+
+Submit a generic ephemeral command-backed job:
+
+```bash
+curl -X POST http://localhost:8000/v1/example/command/run \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"write artifact","artifact_name":"note.txt","artifact_text":"artifact payload"}'
+```
+
 Submit a warm HTTP-backed image job:
 
 ```bash
@@ -224,10 +309,31 @@ Inspect loaded capabilities:
 curl http://localhost:8000/ops/capabilities
 ```
 
+Inspect services, runtime state, and queue state:
+
+```bash
+curl http://localhost:8000/ops/services
+curl http://localhost:8000/ops/runtime
+curl http://localhost:8000/ops/queues
+```
+
 Cancel a job:
 
 ```bash
 curl -X POST http://localhost:8000/v1/jobs/<job_id>/cancel
+```
+
+Run the example HTTP backends directly for manual debugging:
+
+```bash
+make run-mock-http-alpha
+make run-mock-http-beta
+```
+
+or:
+
+```bash
+docker compose -f docker-compose.examples.yml up --build
 ```
 
 ## Troubleshooting

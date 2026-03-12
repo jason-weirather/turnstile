@@ -41,7 +41,13 @@ class FakeContainer:
         self.get_archive_calls: list[str] = []
         self._output_archive = _build_archive(
             {
-                "output/result.json": json.dumps({"text": "runtime-result", "language": "en"}),
+                "output/result.json": json.dumps(
+                    {
+                        "backend_kind": "mock_command_tool",
+                        "instance_id": "command-alpha",
+                        "artifact_names": ["artifact.txt"],
+                    }
+                ),
                 "output/artifact.txt": "artifact",
             }
         )
@@ -168,46 +174,52 @@ def _archive_texts(raw_archive: bytes) -> dict[str, str]:
 def test_warm_http_service_lifecycle_reuses_and_evicts_conflicts() -> None:
     controller = DockerRuntimeController(client_factory=lambda: FakeDockerClient())
     store = get_job_store()
-    warm_service = ServiceDescriptor(
-        service_id="warm-image",
-        capabilities=["image.generate"],
-        image="python:3.12-slim",
+    alpha_service = ServiceDescriptor(
+        service_id="mock-http-alpha",
+        capabilities=["example.http.echo"],
+        image="turnstile/mock-http-tool:latest",
         mode=ServiceMode.WARM,
         gpu_required=True,
-        estimated_vram_mb=4096,
+        estimated_vram_mb=512,
         startup_timeout_s=5,
         idle_ttl_s=60,
         healthcheck={"type": "none"},
         adapter_type=AdapterType.HTTP_FORWARD_JSON,
-        adapter_config={"container_port": 8000},
+        adapter_config={"container_port": 8000, "path": "/invoke"},
         cancel_strategy="http_request_cancel",
         eviction_priority=10,
     )
-    conflicting_service = warm_service.model_copy(
-        update={"service_id": "warm-other", "capabilities": ["image.edit"]}
+    beta_service = alpha_service.model_copy(
+        update={
+            "service_id": "mock-http-beta",
+            "eviction_priority": 20,
+        }
     )
 
-    first_handle = controller.ensure_warm_http_service(warm_service)
-    second_handle = controller.ensure_warm_http_service(warm_service)
+    first_handle = controller.ensure_warm_http_service(alpha_service)
+    second_handle = controller.ensure_warm_http_service(alpha_service)
+    third_handle = controller.ensure_warm_http_service(beta_service)
 
     assert isinstance(first_handle, WarmServiceHandle)
     assert first_handle.container_id == second_handle.container_id
+    assert third_handle.container_id != first_handle.container_id
     assert first_handle.base_url.startswith("http://127.0.0.1:")
-    assert store.get_warm_service("warm-image") is not None
+    assert store.get_warm_service("mock-http-alpha") is None
+    assert store.get_warm_service("mock-http-beta") is not None
     assert controller._client().containers.run_calls[0]["device_requests"] is not None
-
-    controller.prepare_for_service(conflicting_service)
-
-    assert store.get_warm_service("warm-image") is None
+    assert [call["image"] for call in controller._client().containers.run_calls] == [
+        "turnstile/mock-http-tool:latest",
+        "turnstile/mock-http-tool:latest",
+    ]
 
 
 def test_ephemeral_docker_job_lifecycle_collects_outputs_and_artifacts() -> None:
     fake_client = FakeDockerClient()
     controller = DockerRuntimeController(client_factory=lambda: fake_client)
     service = ServiceDescriptor(
-        service_id="ephemeral-audio",
-        capabilities=["audio.transcribe"],
-        image="python:3.12-slim",
+        service_id="mock-command-alpha",
+        capabilities=["example.command.run"],
+        image="turnstile/mock-command-tool:latest",
         mode=ServiceMode.EPHEMERAL,
         gpu_required=False,
         estimated_vram_mb=0,
@@ -216,8 +228,8 @@ def test_ephemeral_docker_job_lifecycle_collects_outputs_and_artifacts() -> None
         healthcheck={"type": "none"},
         adapter_type=AdapterType.CONTAINER_COMMAND,
         adapter_config={
-            "command": ["python", "-c", "print('ok')"],
             "result_file": "result.json",
+            "env": {"MOCK_INSTANCE_ID": "command-alpha"},
         },
         cancel_strategy="container_stop",
         eviction_priority=20,
@@ -225,33 +237,39 @@ def test_ephemeral_docker_job_lifecycle_collects_outputs_and_artifacts() -> None
 
     result = controller.execute_container_command(
         service,
-        {"audio_url": "https://example.com/file.wav"},
+        {"text": "hello", "artifact_name": "artifact.txt"},
         "job-ephemeral",
     )
 
     assert result.container_id == "container-1"
-    assert result.result_payload == {"text": "runtime-result", "language": "en"}
+    assert result.result_payload == {
+        "backend_kind": "mock_command_tool",
+        "instance_id": "command-alpha",
+        "artifact_names": ["artifact.txt"],
+    }
     assert [artifact.name for artifact in result.artifacts] == ["artifact.txt", "result.json"]
     create_call = fake_client.containers.create_calls[0]
     assert "volumes" not in create_call
+    assert create_call["environment"]["MOCK_INSTANCE_ID"] == "command-alpha"
     container = fake_client.containers.get("container-1")
     assert container.started is True
     assert container.get_archive_calls == ["/turnstile/output"]
     uploaded_archive = _archive_texts(container.put_archive_calls[0][1])
     assert container.put_archive_calls[0][0] == "/"
     assert json.loads(uploaded_archive["turnstile/input/request.json"]) == {
-        "audio_url": "https://example.com/file.wav"
+        "text": "hello",
+        "artifact_name": "artifact.txt",
     }
 
 
 def test_runtime_pulls_missing_image_before_ephemeral_execution() -> None:
-    containers = FakeContainerCollection(missing_images={"python:3.12-slim"})
+    containers = FakeContainerCollection(missing_images={"turnstile/mock-command-tool:latest"})
     fake_client = FakeDockerClient(containers=containers)
     controller = DockerRuntimeController(client_factory=lambda: fake_client)
     service = ServiceDescriptor(
-        service_id="ephemeral-audio",
-        capabilities=["audio.transcribe"],
-        image="python:3.12-slim",
+        service_id="mock-command-alpha",
+        capabilities=["example.command.run"],
+        image="turnstile/mock-command-tool:latest",
         mode=ServiceMode.EPHEMERAL,
         gpu_required=False,
         estimated_vram_mb=0,
@@ -266,11 +284,51 @@ def test_runtime_pulls_missing_image_before_ephemeral_execution() -> None:
 
     controller.execute_container_command(
         service,
-        {"audio_url": "https://example.com/file.wav"},
+        {"text": "hello"},
         "job-ephemeral",
     )
 
-    assert fake_client.images.pull_calls == ["python:3.12-slim"]
+    assert fake_client.images.pull_calls == ["turnstile/mock-command-tool:latest"]
+
+
+def test_ephemeral_docker_job_non_zero_exit_raises_runtime_error() -> None:
+    class FailingContainerCollection(FakeContainerCollection):
+        def create(self, image: str, **kwargs: Any) -> FakeContainer:
+            container = FakeContainer(
+                "container-1",
+                status_code=7,
+                stdout='{"backend_kind":"mock_command_tool"}',
+                stderr="forced failure",
+            )
+            self._containers[container.id] = container
+            self.create_calls.append({"image": image, **kwargs})
+            return container
+
+    controller = DockerRuntimeController(
+        client_factory=lambda: FakeDockerClient(containers=FailingContainerCollection())
+    )
+    service = ServiceDescriptor(
+        service_id="mock-command-alpha",
+        capabilities=["example.command.run"],
+        image="turnstile/mock-command-tool:latest",
+        mode=ServiceMode.EPHEMERAL,
+        gpu_required=False,
+        estimated_vram_mb=0,
+        startup_timeout_s=5,
+        idle_ttl_s=60,
+        healthcheck={"type": "none"},
+        adapter_type=AdapterType.CONTAINER_COMMAND,
+        adapter_config={"result_file": "result.json"},
+        cancel_strategy="container_stop",
+        eviction_priority=20,
+    )
+
+    try:
+        controller.execute_container_command(service, {"fail": True}, "job-ephemeral")
+    except RuntimeError as exc:
+        assert "forced failure" in str(exc)
+    else:
+        raise AssertionError("Expected container execution to fail")
 
 
 def test_runtime_cancellation_stops_ephemeral_container_and_supports_warm_cancel() -> None:
@@ -294,9 +352,9 @@ def test_runtime_cancellation_stops_ephemeral_container_and_supports_warm_cancel
     store = get_job_store()
 
     ephemeral = ServiceDescriptor(
-        service_id="ephemeral-audio",
-        capabilities=["audio.transcribe"],
-        image="python:3.12-slim",
+        service_id="mock-command-alpha",
+        capabilities=["example.command.run"],
+        image="turnstile/mock-command-tool:latest",
         mode=ServiceMode.EPHEMERAL,
         gpu_required=False,
         estimated_vram_mb=0,
@@ -309,12 +367,12 @@ def test_runtime_cancellation_stops_ephemeral_container_and_supports_warm_cancel
         eviction_priority=20,
     )
     warm = ServiceDescriptor(
-        service_id="warm-image",
-        capabilities=["image.generate"],
-        image="python:3.12-slim",
+        service_id="mock-http-alpha",
+        capabilities=["example.http.echo"],
+        image="turnstile/mock-http-tool:latest",
         mode=ServiceMode.WARM,
         gpu_required=True,
-        estimated_vram_mb=4096,
+        estimated_vram_mb=512,
         startup_timeout_s=5,
         idle_ttl_s=60,
         healthcheck={"type": "none"},
@@ -327,7 +385,7 @@ def test_runtime_cancellation_stops_ephemeral_container_and_supports_warm_cancel
     ephemeral_container = containers.run(ephemeral.image)
     ephemeral_job = JobRecord(
         job_id="job-running",
-        capability="audio.transcribe",
+        capability="example.command.run",
         queue_lane=QueueLane.CPU,
         requested_service_id=ephemeral.service_id,
         selected_service_id=ephemeral.service_id,
@@ -349,7 +407,7 @@ def test_runtime_cancellation_stops_ephemeral_container_and_supports_warm_cancel
     store.set_warm_service(warm_state)
     warm_job = JobRecord(
         job_id="job-warm",
-        capability="image.generate",
+        capability="example.http.echo",
         queue_lane=QueueLane.GPU,
         requested_service_id=warm.service_id,
         selected_service_id=warm.service_id,

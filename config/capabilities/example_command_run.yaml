@@ -1,0 +1,15 @@
+capability_id: example.command.run
+method: POST
+path: /example/command/run
+summary: Run a generic command example backend
+request_schema: requests/example_command_run.request.json
+response_schema: responses/job_accepted.response.json
+execution_mode: async
+queue_lane: cpu
+adapter_type: container_command
+default_service_selection: mock-command-alpha
+docs_examples:
+  - text: write a sample artifact
+    artifact_name: sample.txt
+    artifact_text: sample artifact contents
+    service_id: mock-command-alpha

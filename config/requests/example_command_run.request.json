@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service_id": { "type": "string" },
+    "sleep_s": { "type": "number" },
+    "fail": { "type": "boolean" },
+    "text": { "type": "string" },
+    "prompt": { "type": "string" },
+    "payload": { "type": "object" },
+    "artifact_name": { "type": "string" },
+    "artifact_text": { "type": "string" }
+  }
+}

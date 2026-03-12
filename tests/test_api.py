@@ -18,6 +18,8 @@ def test_openapi_includes_capability_routes() -> None:
 
     assert response.status_code == 200
     paths = response.json()["paths"]
+    assert "/v1/example/http/echo" in paths
+    assert "/v1/example/command/run" in paths
     assert "/v1/image/generate" in paths
     assert "/v1/audio/transcribe" in paths
 
@@ -69,6 +71,53 @@ def test_submit_audio_transcribe_job() -> None:
     assert body["result_payload"]["transcript_file"] == "transcript.txt"
 
 
+def test_submit_example_http_job_with_service_override() -> None:
+    client = TestClient(app)
+
+    submit_response = client.post(
+        "/v1/example/http/echo",
+        json={"text": "hello beta", "service_id": "mock-http-beta"},
+    )
+
+    assert submit_response.status_code == 202
+    job_id = submit_response.json()["job_id"]
+
+    job_response = client.get(f"/v1/jobs/{job_id}")
+    assert job_response.status_code == 200
+    body = job_response.json()
+    assert body["status"] == "succeeded"
+    assert body["requested_service_id"] == "mock-http-beta"
+    assert body["selected_service_id"] == "mock-http-beta"
+    assert body["result_payload"]["service_id"] == "mock-http-beta"
+    assert body["result_payload"]["echo"]["text"] == "hello beta"
+
+
+def test_submit_example_command_job_with_service_override() -> None:
+    client = TestClient(app)
+
+    submit_response = client.post(
+        "/v1/example/command/run",
+        json={
+            "text": "artifact body",
+            "artifact_name": "note.txt",
+            "artifact_text": "artifact body",
+            "service_id": "mock-command-alpha",
+        },
+    )
+
+    assert submit_response.status_code == 202
+    job_id = submit_response.json()["job_id"]
+
+    job_response = client.get(f"/v1/jobs/{job_id}")
+    assert job_response.status_code == 200
+    body = job_response.json()
+    assert body["status"] == "succeeded"
+    assert body["requested_service_id"] == "mock-command-alpha"
+    assert body["selected_service_id"] == "mock-command-alpha"
+    assert body["result_payload"]["service_id"] == "mock-command-alpha"
+    assert body["result_payload"]["echo"]["artifact_name"] == "note.txt"
+
+
 def test_ops_and_health_endpoints_expose_runtime_visibility() -> None:
     client = TestClient(app)
 
@@ -89,6 +138,8 @@ def test_ops_and_health_endpoints_expose_runtime_visibility() -> None:
     assert health_response.json()["redis"]["reachable"] is True
     assert len(services_response.json()["services"]) >= 2
     assert {item["capability_id"] for item in capabilities_response.json()} >= {
+        "example.http.echo",
+        "example.command.run",
         "audio.transcribe",
         "image.generate",
     }

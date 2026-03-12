@@ -1,0 +1,15 @@
+capability_id: example.http.echo
+method: POST
+path: /example/http/echo
+summary: Echo a request through a warm HTTP example backend
+request_schema: requests/example_http_echo.request.json
+response_schema: responses/job_accepted.response.json
+execution_mode: async
+queue_lane: gpu
+adapter_type: http_forward_json
+default_service_selection: mock-http-alpha
+docs_examples:
+  - text: hello from alpha
+    service_id: mock-http-alpha
+  - text: hello from beta
+    service_id: mock-http-beta

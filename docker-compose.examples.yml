@@ -1,0 +1,22 @@
+services:
+  mock-http-alpha:
+    build:
+      context: ./examples/backends/mock_http_tool
+    image: turnstile/mock-http-tool:latest
+    environment:
+      MOCK_INSTANCE_ID: alpha
+      MOCK_RESPONSE_PREFIX: alpha:
+      MOCK_TAG_COLOR: amber
+      MOCK_PORT: "8000"
+    ports:
+      - "18080:8000"
+
+  mock-http-beta:
+    image: turnstile/mock-http-tool:latest
+    environment:
+      MOCK_INSTANCE_ID: beta
+      MOCK_RESPONSE_PREFIX: beta:
+      MOCK_TAG_COLOR: blue
+      MOCK_PORT: "8000"
+    ports:
+      - "18081:8000"
