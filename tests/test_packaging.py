@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -48,7 +49,9 @@ def test_example_backend_assets_and_make_targets_exist() -> None:
     assert (root / "examples" / "backends" / "mock_command_tool" / "Dockerfile").exists()
     assert (root / "examples" / "backends" / "mock_command_tool" / "main.py").exists()
     assert (root / "docker-compose.examples.yml").exists()
+    assert (root / "docs" / "smoke-test.md").exists()
     assert (root / "docs" / "testing-backends.md").exists()
+    assert (root / "scripts" / "smoke_test.sh").exists()
 
     for target in (
         "build-example-backends:",
@@ -56,6 +59,8 @@ def test_example_backend_assets_and_make_targets_exist() -> None:
         "build-mock-command-tool:",
         "run-mock-http-alpha:",
         "run-mock-http-beta:",
+        "smoke-docker:",
+        "smoke-docker-keepalive:",
     ):
         assert target in makefile
 
@@ -63,6 +68,7 @@ def test_example_backend_assets_and_make_targets_exist() -> None:
 def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() -> None:
     root = Path(__file__).resolve().parents[1]
     readme = (root / "README.md").read_text(encoding="utf-8")
+    smoke_doc = (root / "docs" / "smoke-test.md").read_text(encoding="utf-8")
     testing_doc = (root / "docs" / "testing-backends.md").read_text(encoding="utf-8")
     services_dir = root / "config" / "services"
 
@@ -84,9 +90,25 @@ def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() ->
         "turnstile/mock-http-tool:latest",
         "turnstile/mock-command-tool:latest",
         "build-example-backends",
+        "smoke-docker",
         "/v1/example/http/echo",
         "/v1/example/command/run",
         "service_id",
     ):
         assert text in readme
+        assert text in smoke_doc
         assert text in testing_doc
+
+
+def test_smoke_script_has_valid_shell_syntax() -> None:
+    root = Path(__file__).resolve().parents[1]
+    script_path = root / "scripts" / "smoke_test.sh"
+
+    result = subprocess.run(
+        ["bash", "-n", str(script_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr

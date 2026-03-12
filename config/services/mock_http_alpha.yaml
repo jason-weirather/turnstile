@@ -3,8 +3,8 @@ capabilities:
   - example.http.echo
 mode: warm
 image: turnstile/mock-http-tool:latest
-gpu_required: true
-estimated_vram_mb: 512
+gpu_required: false
+estimated_vram_mb: 0
 startup_timeout_s: 30
 idle_ttl_s: 120
 healthcheck:

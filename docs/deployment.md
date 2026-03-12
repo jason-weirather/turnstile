@@ -2,6 +2,8 @@
 
 This document covers the intended deployment target for Turnstile: one server, one scarce GPU, a Dockerized control plane, warm HTTP backends, and ephemeral command-backed jobs.
 
+For the clean-checkout, operator-facing verification path, use [docs/smoke-test.md](smoke-test.md). This document focuses on deployment semantics and troubleshooting rather than the canonical smoke sequence.
+
 ## Prerequisites
 
 - Docker Engine installed and running

@@ -69,7 +69,6 @@ adapter_config:
 The image stays the same. Only `service_id` and env differ. That is enough to test:
 
 - warm reuse when `mock-http-alpha` is requested twice
-- warm eviction when a GPU-conflicting warm service switches from alpha to beta
 - backend selection by `service_id`
 
 The same pattern also works for command services. `mock-command-alpha` and `mock-command-beta` both use `turnstile/mock-command-tool:latest` and differ only by env such as `MOCK_INSTANCE_ID` and `MOCK_OUTPUT_BASENAME`.
@@ -103,43 +102,32 @@ curl -X POST http://localhost:8000/v1/example/http/echo \
   - Turnstile launches a one-shot container from `turnstile/mock-command-tool:latest`
   - the backend writes `result.json` plus artifacts into `TURNSTILE_OUTPUT_DIR`
 
-## Manual Testing
+## Canonical End-To-End Smoke Test
 
-Build the images, then start Turnstile and its workers:
+Use [docs/smoke-test.md](smoke-test.md) for the primary clean-checkout path. That document is the source of truth for:
 
-```bash
-conda activate turnstile_env
-pip install -e '.[dev]'
-make build-example-backends
-make dev
-make worker-gpu
-make worker-cpu
-```
+- copying `.env.example` to `.env`
+- building the example backend images
+- starting `docker compose`
+- checking `/healthz`, `/ops/capabilities`, `/ops/services`, `/ops/runtime`, and `/ops/queues`
+- submitting and polling `POST /v1/example/http/echo`
+- submitting and polling `POST /v1/example/command/run`
+- optionally checking Flower
+- shutting the stack down cleanly
 
-Inspect loaded definitions:
-
-```bash
-curl http://localhost:8000/ops/capabilities
-curl http://localhost:8000/ops/services
-curl http://localhost:8000/ops/runtime
-curl http://localhost:8000/ops/queues
-```
-
-Queue a warm HTTP example job:
+The executable version of that path is:
 
 ```bash
-curl -X POST http://localhost:8000/v1/example/http/echo \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"hello warm world","service_id":"mock-http-alpha"}'
+make smoke-docker
 ```
 
-Queue an ephemeral command example job:
+Keep the stack running after the smoke test:
 
 ```bash
-curl -X POST http://localhost:8000/v1/example/command/run \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"write artifact","artifact_name":"note.txt","artifact_text":"artifact payload"}'
+make smoke-docker-keepalive
 ```
+
+## Direct Backend Debugging
 
 For manual backend debugging outside Turnstile, either run the Make targets:
 

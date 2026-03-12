@@ -20,6 +20,23 @@ Turnstile is not a generic passthrough proxy, a Kubernetes control plane, or a s
 - `TURNSTILE_RUNTIME_MODE=stub`: deterministic local/test mode with no Docker calls.
 - `TURNSTILE_RUNTIME_MODE=docker`: real Docker mode for warm services and ephemeral jobs.
 
+## Docker Smoke Test
+
+The canonical end-to-end Docker verification path lives in [docs/smoke-test.md](docs/smoke-test.md). That document is the primary source of truth for the clean-checkout path, the exact `curl` commands, and the expected job/result shapes.
+
+Quick path from a fresh checkout:
+
+```bash
+cp .env.example .env
+make smoke-docker
+```
+
+If you want the stack left running after the smoke test:
+
+```bash
+make smoke-docker-keepalive
+```
+
 ## API Surface
 
 Static routes:
@@ -64,7 +81,8 @@ Start the full stack:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+make build-example-backends
+docker compose up -d --build
 ```
 
 The shipped Compose file starts:
@@ -76,6 +94,8 @@ The shipped Compose file starts:
 - `redis` on `localhost:6379`
 
 Compose declares an explicit `turnstile` bridge network. Managed warm containers join that same network and are addressed by their generated container name from within the control plane.
+
+For the exact first-run smoke sequence, use [docs/smoke-test.md](docs/smoke-test.md).
 
 ## Manual Run
 
@@ -110,6 +130,7 @@ Ephemeral command services:
 - After completion, Turnstile downloads `/turnstile/output` back out of the container and records artifacts from that extracted output.
 
 More deployment notes live in [docs/deployment.md](docs/deployment.md).
+The canonical Docker smoke test lives in [docs/smoke-test.md](docs/smoke-test.md).
 Example backend details live in [docs/testing-backends.md](docs/testing-backends.md).
 
 ## Example Testing Backends
@@ -261,100 +282,26 @@ adapter_config:
       print(json.dumps({"language": request["hint"]}))
 ```
 
-## Examples
+## Examples And Verification
 
-Submit a generic warm HTTP-backed job to the default service:
+Use [docs/smoke-test.md](docs/smoke-test.md) for the exact Docker smoke-test sequence, including:
 
-```bash
-curl -X POST http://localhost:8000/v1/example/http/echo \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"hello warm world"}'
-```
+- `POST /v1/example/http/echo`
+- `POST /v1/example/command/run`
+- `GET /v1/jobs/{job_id}`
+- `/healthz`
+- `/ops/capabilities`
+- `/ops/services`
+- `/ops/runtime`
+- `/ops/queues`
+- optional Flower checks
 
-Submit the same request to a specific backend instance:
-
-```bash
-curl -X POST http://localhost:8000/v1/example/http/echo \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"hello beta","service_id":"mock-http-beta"}'
-```
-
-Submit a generic ephemeral command-backed job:
-
-```bash
-curl -X POST http://localhost:8000/v1/example/command/run \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"write artifact","artifact_name":"note.txt","artifact_text":"artifact payload"}'
-```
-
-Submit a warm HTTP-backed image job:
-
-```bash
-curl -X POST http://localhost:8000/v1/image/generate \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"studio portrait","style":"cinematic"}'
-```
-
-Submit an ephemeral command-backed audio job:
-
-```bash
-curl -X POST http://localhost:8000/v1/audio/transcribe \
-  -H 'Content-Type: application/json' \
-  -d '{"audio_url":"https://example.com/clip.wav","language":"en"}'
-```
-
-Inspect loaded capabilities:
-
-```bash
-curl http://localhost:8000/ops/capabilities
-```
-
-Inspect services, runtime state, and queue state:
-
-```bash
-curl http://localhost:8000/ops/services
-curl http://localhost:8000/ops/runtime
-curl http://localhost:8000/ops/queues
-```
-
-Cancel a job:
-
-```bash
-curl -X POST http://localhost:8000/v1/jobs/<job_id>/cancel
-```
-
-Run the example HTTP backends directly for manual debugging:
+For direct backend debugging outside Turnstile, use:
 
 ```bash
 make run-mock-http-alpha
 make run-mock-http-beta
-```
-
-or:
-
-```bash
 docker compose -f docker-compose.examples.yml up --build
 ```
 
-## Troubleshooting
-
-- `ModuleNotFoundError: No module named 'httpx'`:
-  - Rebuild the image after updating runtime dependencies. The production image installs `pip install -e .`, not `.[dev]`.
-- `celery ... flower` fails with `No such command 'flower'`:
-  - Rebuild the image after adding the `flower` runtime dependency.
-- `/healthz` says Docker is unreachable:
-  - Check the socket mount or `TURNSTILE_DOCKER_HOST`.
-- Ephemeral command jobs cannot see uploaded files or produced artifacts:
-  - Confirm the worker can reach the Docker daemon. Turnstile now uses Docker archive copy APIs, so child containers no longer depend on worker-container temp paths being host-visible.
-- Warm services are unreachable in Compose:
-  - Confirm `TURNSTILE_DOCKER_NETWORK=turnstile` and that the worker/api containers are attached to the same explicit `turnstile` network.
-- Flower shows no workers:
-  - Confirm the workers start with `celery -A worker:celery_app ...` and that Redis is reachable.
-
-## Verification
-
-```bash
-make test
-make lint
-make typecheck
-```
+For deployment-specific troubleshooting, see [docs/deployment.md](docs/deployment.md).

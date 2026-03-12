@@ -1,6 +1,6 @@
 .PHONY: dev worker worker-gpu worker-cpu flower test lint format typecheck \
 	build-example-backends build-mock-http-tool build-mock-command-tool \
-	run-mock-http-alpha run-mock-http-beta
+	run-mock-http-alpha run-mock-http-beta smoke-docker smoke-docker-keepalive
 
 dev:
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -50,3 +50,9 @@ run-mock-http-beta:
 		-e MOCK_RESPONSE_PREFIX=beta: \
 		-e MOCK_TAG_COLOR=blue \
 		turnstile/mock-http-tool:latest
+
+smoke-docker:
+	bash scripts/smoke_test.sh
+
+smoke-docker-keepalive:
+	TURNSTILE_SMOKE_KEEP_RUNNING=1 bash scripts/smoke_test.sh --keep-running
