@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import httpx
@@ -8,6 +7,48 @@ import httpx
 from app.models.capability import AdapterType, CapabilityDefinition, ExecutionMode, QueueLane
 from app.models.service import ServiceDescriptor, ServiceMode
 from app.services.adapters import ContainerCommandAdapter, HttpForwardJsonAdapter
+from app.services.runtime import (
+    EphemeralExecutionResult,
+    RuntimeArtifact,
+    RuntimeController,
+    WarmServiceHandle,
+)
+
+
+class FakeRuntime(RuntimeController):
+    def prepare_for_service(self, service: ServiceDescriptor) -> None:
+        del service
+
+    def execute_container_command(
+        self,
+        service: ServiceDescriptor,
+        payload: dict[str, object],
+        job_id: str,
+    ) -> EphemeralExecutionResult:
+        del service, payload, job_id
+        return EphemeralExecutionResult(
+            container_id="container-123",
+            stdout='{"text":"hello"}',
+            stderr="",
+            artifacts=[
+                RuntimeArtifact(
+                    name="transcript.txt",
+                    path="/tmp/transcript.txt",
+                    size_bytes=5,
+                )
+            ],
+        )
+
+    def ensure_warm_http_service(self, service: ServiceDescriptor) -> WarmServiceHandle:
+        del service
+        raise NotImplementedError
+
+    def cancel_job(self, job: object, service: ServiceDescriptor) -> bool:
+        del job, service
+        return False
+
+    def docker_reachable(self) -> tuple[bool, str | None]:
+        return (True, None)
 
 
 def test_http_forward_json_adapter_normalizes_response() -> None:
@@ -46,12 +87,12 @@ def test_http_forward_json_adapter_normalizes_response() -> None:
         return httpx.Client(transport=transport, base_url="https://example.test", timeout=10.0)
 
     adapter = HttpForwardJsonAdapter(client_factory=client_factory)
-    result = adapter.execute(capability, service, {"prompt": "test"})
+    result = adapter.execute(capability, service, {"prompt": "test"}, job_id="job-1")
 
     assert result.result_payload == {"ok": True, "backend": "warm-http"}
 
 
-def test_container_command_adapter_parses_json_stdout() -> None:
+def test_container_command_adapter_normalizes_runtime_result() -> None:
     capability = CapabilityDefinition(
         capability_id="audio.transcribe",
         method="POST",
@@ -74,23 +115,16 @@ def test_container_command_adapter_parses_json_stdout() -> None:
         startup_timeout_s=30,
         idle_ttl_s=300,
         adapter_type=AdapterType.CONTAINER_COMMAND,
-        adapter_config={
-            "command": [
-                sys.executable,
-                "-c",
-                (
-                    "import json, sys; "
-                    "payload=json.load(sys.stdin); "
-                    "print(json.dumps({'text': payload['audio_url']}))"
-                ),
-            ]
-        },
+        adapter_config={},
     )
 
-    result = ContainerCommandAdapter().execute(
+    result = ContainerCommandAdapter(runtime_controller=FakeRuntime()).execute(
         capability,
         service,
         {"audio_url": "https://example.com/file.wav"},
+        job_id="job-2",
     )
 
-    assert result.result_payload == {"text": "https://example.com/file.wav"}
+    assert result.container_id == "container-123"
+    assert result.result_payload["text"] == "hello"
+    assert result.result_payload["artifacts"][0]["name"] == "transcript.txt"

@@ -1,12 +1,16 @@
+from __future__ import annotations
+
 from uuid import uuid4
 
 from celery import states
 
 from app.core.celery_app import celery_app
+from app.core.config import get_settings
 from app.models.job import JobCancelResponse, JobRecord, JobResponse, JobStatus
 from app.services.capabilities import get_capability_registry
 from app.services.job_store import get_job_store
 from app.services.registry import get_service_registry
+from app.services.runtime import get_runtime_controller
 from app.tasks import execute_capability_task
 
 
@@ -16,6 +20,7 @@ def submit_capability_job(capability_id: str, payload: dict[str, object]) -> dic
     service = get_service_registry().resolve_for_capability(
         capability_id,
         service_id if isinstance(service_id, str) else None,
+        capability.default_service_selection,
     )
     job_id = str(uuid4())
     get_job_store().enqueue(
@@ -45,7 +50,34 @@ def get_job_response(job_id: str) -> JobResponse | None:
     record = get_job_store().get(job_id)
     if record is None:
         return None
+    return _job_response(record)
 
+
+def list_job_responses(limit: int | None = None) -> list[JobResponse]:
+    resolved_limit = limit if limit is not None else get_settings().ops_job_limit
+    return [_job_response(job) for job in get_job_store().list_jobs(resolved_limit)]
+
+
+def cancel_job(job_id: str) -> JobCancelResponse | None:
+    store = get_job_store()
+    existing = store.get(job_id)
+    if existing is None:
+        return None
+
+    job = store.cancel(job_id)
+    if job is None:
+        return None
+
+    service = get_service_registry().get(job.selected_service_id)
+    if service is not None:
+        get_runtime_controller().cancel_job(job, service)
+
+    celery_app.control.revoke(job_id, terminate=False)
+    celery_app.backend.store_result(job_id, {"status": "cancelled"}, states.REVOKED)
+    return JobCancelResponse(job_id=job_id, status=JobStatus.CANCELLED)
+
+
+def _job_response(record: JobRecord) -> JobResponse:
     return JobResponse(
         job_id=record.job_id,
         capability=record.capability,
@@ -64,12 +96,3 @@ def get_job_response(job_id: str) -> JobResponse | None:
         result=record.result_payload,
         error=record.error_detail,
     )
-
-
-def cancel_job(job_id: str) -> JobCancelResponse | None:
-    job = get_job_store().cancel(job_id)
-    if job is None:
-        return None
-    celery_app.control.revoke(job_id, terminate=False)
-    celery_app.backend.store_result(job_id, {"status": "cancelled"}, states.REVOKED)
-    return JobCancelResponse(job_id=job_id, status=JobStatus.CANCELLED)

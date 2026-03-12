@@ -72,12 +72,12 @@ def test_gpu_queue_order_and_state_transitions() -> None:
     time.sleep(0.02)
 
     second_state = store.get("job-2")
-    snapshot = store.snapshot()
+    gpu_queue = next(queue for queue in store.queue_snapshots(["gpu"]) if queue.lane == "gpu")
 
     assert second_state is not None
     assert second_state.status == JobStatus.WAITING_FOR_GPU
-    assert snapshot.active_job_id == "job-1"
-    assert snapshot.queue == ["job-2"]
+    assert gpu_queue.active_job_id == "job-1"
+    assert gpu_queue.queued_job_ids == ["job-2"]
 
     first_thread.join()
     second_thread.join()

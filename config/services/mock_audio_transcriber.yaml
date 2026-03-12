@@ -2,7 +2,7 @@ service_id: mock-audio-transcriber
 capabilities:
   - audio.transcribe
 mode: ephemeral
-image: ghcr.io/example/mock-audio-transcriber:latest
+image: python:3.12-slim
 gpu_required: false
 estimated_vram_mb: 0
 startup_timeout_s: 30
@@ -12,12 +12,25 @@ healthcheck:
 adapter_type: container_command
 adapter_config:
   command:
-    - python3
+    - python
     - -c
     - |
-      import json, sys
-      payload = json.load(sys.stdin)
-      print(json.dumps({"text": f"transcribed:{payload['audio_url']}", "language": payload.get("language", "auto")}))
-  timeout_s: 5
-cancel_strategy: celery_revoke
+      import json, os
+      from pathlib import Path
+
+      payload = json.loads(os.environ["TURNSTILE_REQUEST_JSON"])
+      output_dir = Path(os.environ["TURNSTILE_OUTPUT_DIR"])
+      transcript = output_dir / "transcript.txt"
+      transcript.write_text(f"transcribed:{payload['audio_url']}", encoding="utf-8")
+      print(
+          json.dumps(
+              {
+                  "text": transcript.read_text(encoding="utf-8"),
+                  "language": payload.get("language", "auto"),
+                  "transcript_file": "transcript.txt",
+              }
+          )
+      )
+  timeout_s: 10
+cancel_strategy: container_stop
 eviction_priority: 20

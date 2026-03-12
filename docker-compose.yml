@@ -3,19 +3,45 @@ services:
     build: .
     env_file:
       - .env
+    environment:
+      - TURNSTILE_RUNTIME_MODE=docker
+      - TURNSTILE_DOCKER_NETWORK=turnstile_default
+      - TURNSTILE_DOCKER_HOST=${DOCKER_HOST:-}
     ports:
       - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - redis
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-  worker:
+  worker-gpu:
     build: .
     env_file:
       - .env
+    environment:
+      - TURNSTILE_RUNTIME_MODE=docker
+      - TURNSTILE_DOCKER_NETWORK=turnstile_default
+      - TURNSTILE_DOCKER_HOST=${DOCKER_HOST:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - redis
     command: celery -A worker.celery_app worker -Q gpu --concurrency=1 --loglevel=info
+
+  worker-cpu:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - TURNSTILE_RUNTIME_MODE=docker
+      - TURNSTILE_DOCKER_NETWORK=turnstile_default
+      - TURNSTILE_DOCKER_HOST=${DOCKER_HOST:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+    command: celery -A worker.celery_app worker -Q cpu --concurrency=1 --loglevel=info
 
   flower:
     build: .

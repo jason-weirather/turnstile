@@ -8,6 +8,7 @@ import pytest
 from app.services import job_store as job_store_module
 from app.services import jobs as jobs_service
 from app.services import orchestrator
+from app.services import runtime as runtime_module
 
 
 @pytest.fixture(autouse=True)
@@ -19,20 +20,27 @@ def fake_redis(monkeypatch: pytest.MonkeyPatch) -> Generator[fakeredis.FakeRedis
     settings.gpu_lock_ttl_s = 5
     settings.arbiter_poll_interval_s = 0.01
     settings.stub_task_delay_s = 0.05
+    settings.runtime_mode = "stub"
+    settings.runtime_heartbeat_interval_s = 0.05
+    settings.docker_network = None
+    settings.docker_service_host = "127.0.0.1"
 
     fake_client = fakeredis.FakeRedis(decode_responses=True)
     store = job_store_module.RedisJobStore(fake_client)
 
     job_store_module.get_redis_client.cache_clear()
     job_store_module.get_job_store.cache_clear()
+    runtime_module.get_runtime_controller.cache_clear()
     monkeypatch.setattr(job_store_module, "get_redis_client", lambda: fake_client)
     monkeypatch.setattr(job_store_module, "get_job_store", lambda: store)
     monkeypatch.setattr(jobs_service, "get_job_store", lambda: store)
     monkeypatch.setattr(orchestrator, "get_job_store", lambda: store)
+    monkeypatch.setattr(runtime_module, "get_job_store", lambda: store)
 
     yield fake_client
 
     store.clear()
+    runtime_module.get_runtime_controller.cache_clear()
 
 
 @pytest.fixture(autouse=True)

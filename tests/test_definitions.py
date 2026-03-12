@@ -28,3 +28,24 @@ def test_invalid_capability_definition_fails_fast(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         loader.load_capabilities()
+
+
+def test_repo_config_examples_load_and_validate() -> None:
+    root = Path(__file__).resolve().parents[1]
+    loader = DefinitionLoader(
+        capabilities_dir=root / "config" / "capabilities",
+        services_dir=root / "config" / "services",
+        schemas_dir=root / "config" / "schemas",
+    )
+
+    capabilities = loader.load_capabilities()
+    services = loader.load_services()
+
+    assert {capability.capability_id for capability in capabilities} >= {
+        "image.generate",
+        "audio.transcribe",
+    }
+    assert {service.service_id for service in services} >= {
+        "mock-image-generator",
+        "mock-audio-transcriber",
+    }

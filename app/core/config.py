@@ -10,11 +10,18 @@ class Settings(BaseModel):
     redis_url: str = "redis://localhost:6379/2"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
-    runtime_mode: str = "noop"
+    runtime_mode: str = "stub"
     stub_task_delay_s: float = 0.2
     job_ttl_s: int = 3600
     gpu_lock_ttl_s: int = 60
     arbiter_poll_interval_s: float = 0.05
+    docker_host: str | None = None
+    docker_network: str | None = None
+    docker_service_host: str = "127.0.0.1"
+    docker_label_prefix: str = "turnstile"
+    runtime_heartbeat_interval_s: float = 1.0
+    warm_probe_interval_s: float = 0.5
+    ops_job_limit: int = 50
 
 
 @lru_cache(maxsize=1)
@@ -28,9 +35,18 @@ def get_settings() -> Settings:
             "TURNSTILE_CELERY_RESULT_BACKEND",
             "redis://localhost:6379/1",
         ),
-        runtime_mode=os.getenv("TURNSTILE_RUNTIME_MODE", "noop"),
+        runtime_mode=os.getenv("TURNSTILE_RUNTIME_MODE", "stub"),
         stub_task_delay_s=float(os.getenv("TURNSTILE_STUB_TASK_DELAY_S", "0.2")),
         job_ttl_s=int(os.getenv("TURNSTILE_JOB_TTL_S", "3600")),
         gpu_lock_ttl_s=int(os.getenv("TURNSTILE_GPU_LOCK_TTL_S", "60")),
         arbiter_poll_interval_s=float(os.getenv("TURNSTILE_ARBITER_POLL_INTERVAL_S", "0.05")),
+        docker_host=os.getenv("TURNSTILE_DOCKER_HOST") or None,
+        docker_network=os.getenv("TURNSTILE_DOCKER_NETWORK") or None,
+        docker_service_host=os.getenv("TURNSTILE_DOCKER_SERVICE_HOST", "127.0.0.1"),
+        docker_label_prefix=os.getenv("TURNSTILE_DOCKER_LABEL_PREFIX", "turnstile"),
+        runtime_heartbeat_interval_s=float(
+            os.getenv("TURNSTILE_RUNTIME_HEARTBEAT_INTERVAL_S", "1.0")
+        ),
+        warm_probe_interval_s=float(os.getenv("TURNSTILE_WARM_PROBE_INTERVAL_S", "0.5")),
+        ops_job_limit=int(os.getenv("TURNSTILE_OPS_JOB_LIMIT", "50")),
     )

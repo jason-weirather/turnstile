@@ -19,11 +19,18 @@ class ServiceRegistry:
         self,
         capability: str,
         service_id: str | None = None,
+        default_service_id: str | None = None,
     ) -> ServiceDescriptor:
         if service_id is not None:
             service = self.get(service_id)
             if service is None or capability not in service.capabilities:
                 raise KeyError(service_id)
+            return service
+
+        if default_service_id is not None:
+            service = self.get(default_service_id)
+            if service is None or capability not in service.capabilities:
+                raise KeyError(default_service_id)
             return service
 
         for service in self._services.values():
