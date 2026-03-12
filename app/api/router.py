@@ -6,8 +6,9 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel
 
 from app.api.routes import health, jobs, ops, services
+from app.models.capability import ExecutionMode
 from app.services.capabilities import get_capability_registry
-from app.services.jobs import submit_capability_job
+from app.services.jobs import execute_capability_request
 
 
 def build_api_router() -> APIRouter:
@@ -32,9 +33,9 @@ def _build_capability_router() -> APIRouter:
             capability_id: str,
             payload_model: type[BaseModel],
         ) -> Any:
-            def endpoint(payload: payload_model) -> dict[str, str]:  # type: ignore[valid-type]
+            def endpoint(payload: payload_model) -> dict[str, object]:  # type: ignore[valid-type]
                 parsed_payload = cast(BaseModel, payload)
-                return submit_capability_job(
+                return execute_capability_request(
                     capability_id,
                     parsed_payload.model_dump(exclude_none=True),
                 )
@@ -47,7 +48,11 @@ def _build_capability_router() -> APIRouter:
             capability.path,
             endpoint_factory(capability.capability_id, request_model),
             methods=[capability.method],
-            status_code=status.HTTP_202_ACCEPTED,
+            status_code=(
+                status.HTTP_200_OK
+                if capability.execution_mode == ExecutionMode.SYNC
+                else status.HTTP_202_ACCEPTED
+            ),
             response_model=response_model,
             summary=capability.summary,
             tags=[capability.capability_id.split(".", maxsplit=1)[0]],

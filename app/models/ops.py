@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models.capability import AdapterType, ExecutionMode, QueueLane
 from app.models.job import JobResponse
 from app.models.service import ServiceDescriptor
 
@@ -53,3 +54,14 @@ class ServiceRuntimeView(BaseModel):
 
 class ServicesSnapshot(BaseModel):
     services: list[ServiceRuntimeView] = Field(default_factory=list)
+
+
+class CapabilityView(BaseModel):
+    capability_id: str
+    method: str
+    path: str
+    summary: str
+    execution_mode: ExecutionMode
+    queue_lane: QueueLane
+    adapter_type: AdapterType
+    default_service_selection: str

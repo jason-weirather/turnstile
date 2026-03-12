@@ -1,20 +1,62 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from celery import states
 
 from app.core.celery_app import celery_app
 from app.core.config import get_settings
+from app.models.capability import CapabilityDefinition, ExecutionMode
 from app.models.job import JobCancelResponse, JobRecord, JobResponse, JobStatus
+from app.models.service import ServiceDescriptor
 from app.services.capabilities import get_capability_registry
 from app.services.job_store import get_job_store
+from app.services.orchestrator import run_capability_job
 from app.services.registry import get_service_registry
 from app.services.runtime import get_runtime_controller
 from app.tasks import execute_capability_task
 
 
+def execute_capability_request(capability_id: str, payload: dict[str, object]) -> dict[str, Any]:
+    capability, service, job_record = _prepare_job_record(capability_id, payload)
+    if capability.execution_mode == ExecutionMode.SYNC:
+        return run_capability_job(
+            job_id=job_record.job_id,
+            capability_id=capability_id,
+            payload=payload,
+            service_id=service.service_id,
+        )
+
+    _dispatch_capability_job(
+        job_id=job_record.job_id,
+        capability_id=capability_id,
+        payload=payload,
+        service_id=service.service_id,
+        queue_name=capability.queue_lane.value,
+    )
+    return _job_accepted_payload(job_record.job_id)
+
+
 def submit_capability_job(capability_id: str, payload: dict[str, object]) -> dict[str, str]:
+    capability, service, job_record = _prepare_job_record(capability_id, payload)
+    if capability.execution_mode != ExecutionMode.ASYNC:
+        raise ValueError(f"Capability '{capability_id}' is not configured for async execution.")
+
+    _dispatch_capability_job(
+        job_id=job_record.job_id,
+        capability_id=capability_id,
+        payload=payload,
+        service_id=service.service_id,
+        queue_name=capability.queue_lane.value,
+    )
+    return _job_accepted_payload(job_record.job_id)
+
+
+def _prepare_job_record(
+    capability_id: str,
+    payload: dict[str, object],
+) -> tuple[CapabilityDefinition, ServiceDescriptor, JobRecord]:
     capability = get_capability_registry().get(capability_id)
     service_id = payload.get("service_id")
     service = get_service_registry().resolve_for_capability(
@@ -23,26 +65,39 @@ def submit_capability_job(capability_id: str, payload: dict[str, object]) -> dic
         capability.default_service_selection,
     )
     job_id = str(uuid4())
-    get_job_store().enqueue(
-        JobRecord(
-            job_id=job_id,
-            capability=capability_id,
-            queue_lane=capability.queue_lane,
-            requested_service_id=service.service_id,
-            selected_service_id=service.service_id,
-            request_payload=payload,
-        )
+    record = JobRecord(
+        job_id=job_id,
+        capability=capability_id,
+        queue_lane=capability.queue_lane,
+        requested_service_id=service.service_id,
+        selected_service_id=service.service_id,
+        request_payload=payload,
     )
+    get_job_store().enqueue(record)
+    return capability, service, record
+
+
+def _dispatch_capability_job(
+    *,
+    job_id: str,
+    capability_id: str,
+    payload: dict[str, object],
+    service_id: str,
+    queue_name: str,
+) -> None:
     execute_capability_task.apply_async(
         kwargs={
             "job_id": job_id,
             "capability_id": capability_id,
             "payload": payload,
-            "service_id": service.service_id,
+            "service_id": service_id,
         },
-        queue=capability.queue_lane.value,
+        queue=queue_name,
         task_id=job_id,
     )
+
+
+def _job_accepted_payload(job_id: str) -> dict[str, str]:
     return {"job_id": job_id, "status": JobStatus.QUEUED.value}
 
 

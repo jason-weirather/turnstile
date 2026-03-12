@@ -1,7 +1,14 @@
 from fastapi import APIRouter
 
-from app.models.ops import JobsSnapshot, QueueSnapshot, RuntimeSnapshot, ServicesSnapshot
+from app.models.ops import (
+    CapabilityView,
+    JobsSnapshot,
+    QueueSnapshot,
+    RuntimeSnapshot,
+    ServicesSnapshot,
+)
 from app.services.ops import (
+    get_capability_views,
     get_jobs_snapshot,
     get_queue_snapshots,
     get_runtime_snapshot,
@@ -24,6 +31,11 @@ def get_jobs_snapshot_endpoint() -> JobsSnapshot:
 @router.get("/ops/services", response_model=ServicesSnapshot)
 def get_services_snapshot_endpoint() -> ServicesSnapshot:
     return get_services_snapshot()
+
+
+@router.get("/ops/capabilities", response_model=list[CapabilityView])
+def get_capability_views_endpoint() -> list[CapabilityView]:
+    return get_capability_views()
 
 
 @router.get("/ops/queues", response_model=list[QueueSnapshot])

@@ -299,9 +299,7 @@ class RedisJobStore:
 
     def clear(self) -> None:
         keys = list(cast(Iterable[str], self._client.keys(f"{self.JOB_KEY_PREFIX}*")))
-        keys.extend(
-            cast(Iterable[str], self._client.keys(f"{self.WARM_SERVICE_KEY_PREFIX}*"))
-        )
+        keys.extend(cast(Iterable[str], self._client.keys(f"{self.WARM_SERVICE_KEY_PREFIX}*")))
         keys.extend(
             [
                 self.JOB_INDEX_KEY,

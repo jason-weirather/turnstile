@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import shutil
+import tarfile
 import tempfile
 import threading
 import time
@@ -14,7 +16,7 @@ from uuid import uuid4
 
 import docker
 import httpx
-from docker.errors import DockerException, NotFound
+from docker.errors import DockerException, ImageNotFound, NotFound
 
 from app.core.config import get_settings
 from app.models.job import JobRecord
@@ -204,36 +206,34 @@ class DockerRuntimeController(RuntimeController):
         job_id: str,
     ) -> EphemeralExecutionResult:
         workspace = Path(tempfile.mkdtemp(prefix=f"turnstile-{job_id}-"))
-        input_dir = workspace / "input"
         output_dir = workspace / "output"
-        input_dir.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        request_path = input_dir / "request.json"
-        request_path.write_text(json.dumps(payload), encoding="utf-8")
 
         container = None
         try:
-            container = self._client().containers.run(
-                service.image,
-                command=service.adapter_config.get("command"),
-                detach=True,
-                auto_remove=False,
-                device_requests=self._device_requests(service),
-                environment=self._container_environment(service, payload, job_id),
-                volumes={
-                    str(input_dir): {"bind": "/turnstile/input", "mode": "ro"},
-                    str(output_dir): {"bind": "/turnstile/output", "mode": "rw"},
-                },
-                network=self._settings.docker_network,
-                labels=self._labels(job_id=job_id, service_id=service.service_id, mode="ephemeral"),
-                working_dir=service.adapter_config.get("working_dir"),
-            )
+            create_kwargs: dict[str, object] = {
+                "command": service.adapter_config.get("command"),
+                "detach": True,
+                "auto_remove": False,
+                "device_requests": self._device_requests(service),
+                "environment": self._container_environment(service, payload, job_id),
+                "labels": self._labels(
+                    job_id=job_id, service_id=service.service_id, mode="ephemeral"
+                ),
+                "working_dir": service.adapter_config.get("working_dir"),
+            }
+            if self._settings.docker_network:
+                create_kwargs["network"] = self._settings.docker_network
+
+            container = self._create_container(service.image, **create_kwargs)
+            self._seed_container_workspace(container, payload)
             self._job_store.attach_container(job_id, container.id)
+            container.start()
             wait_timeout_s = int(service.adapter_config.get("timeout_s", service.startup_timeout_s))
             result = container.wait(timeout=wait_timeout_s)
             stdout = self._decode_logs(container.logs(stdout=True, stderr=False))
             stderr = self._decode_logs(container.logs(stdout=False, stderr=True))
+            self._download_output_archive(container, output_dir)
             artifacts = self._collect_artifacts(output_dir)
             result_payload = self._read_result_payload(service, output_dir, stdout)
             if int(result.get("StatusCode", 1)) != 0:
@@ -288,7 +288,7 @@ class DockerRuntimeController(RuntimeController):
         else:
             run_kwargs["ports"] = {f"{container_port}/tcp": None}
 
-        container = self._client().containers.run(service.image, **run_kwargs)
+        container = self._run_container(service.image, **run_kwargs)
         container.reload()
         base_url = self._warm_base_url(container, container_name, container_port)
         self._wait_for_readiness(service, base_url, container.id)
@@ -362,6 +362,20 @@ class DockerRuntimeController(RuntimeController):
             self._docker_client = self._client_factory()
         return self._docker_client
 
+    def _create_container(self, image: str, **kwargs: object) -> Any:
+        try:
+            return self._client().containers.create(image, **kwargs)
+        except ImageNotFound:
+            self._client().images.pull(image)
+            return self._client().containers.create(image, **kwargs)
+
+    def _run_container(self, image: str, **kwargs: object) -> Any:
+        try:
+            return self._client().containers.run(image, **kwargs)
+        except ImageNotFound:
+            self._client().images.pull(image)
+            return self._client().containers.run(image, **kwargs)
+
     def _container_environment(
         self,
         service: ServiceDescriptor,
@@ -388,6 +402,81 @@ class DockerRuntimeController(RuntimeController):
         if not service.gpu_required:
             return None
         return [docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])]
+
+    def _seed_container_workspace(self, container: Any, payload: dict[str, object]) -> None:
+        archive = self._build_workspace_archive(payload)
+        uploaded = container.put_archive("/", archive)
+        if uploaded is False:
+            raise RuntimeError("Failed to upload request payload into container workspace")
+
+    def _build_workspace_archive(self, payload: dict[str, object]) -> bytes:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            for directory in ("turnstile", "turnstile/input", "turnstile/output"):
+                info = tarfile.TarInfo(name=directory)
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                archive.addfile(info)
+
+            request_bytes = json.dumps(payload).encode("utf-8")
+            request_info = tarfile.TarInfo(name="turnstile/input/request.json")
+            request_info.size = len(request_bytes)
+            request_info.mode = 0o644
+            archive.addfile(request_info, io.BytesIO(request_bytes))
+        return buffer.getvalue()
+
+    def _download_output_archive(self, container: Any, output_dir: Path) -> None:
+        try:
+            stream, _ = container.get_archive("/turnstile/output")
+        except NotFound:
+            return
+
+        archive_bytes = b"".join(
+            chunk if isinstance(chunk, bytes) else bytes(chunk) for chunk in stream
+        )
+        if not archive_bytes:
+            return
+
+        staging_dir = output_dir.parent / "_downloaded_output"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:*") as archive:
+                self._safe_extract_archive(archive, staging_dir)
+            source_dir = self._resolve_output_archive_root(staging_dir)
+            if source_dir is None:
+                return
+            self._copy_directory_contents(source_dir, output_dir)
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    def _safe_extract_archive(self, archive: tarfile.TarFile, target_dir: Path) -> None:
+        target_root = target_dir.resolve()
+        for member in archive.getmembers():
+            member_path = (target_dir / member.name).resolve()
+            if target_root not in member_path.parents and member_path != target_root:
+                raise RuntimeError("Refusing to extract Docker output outside the workspace")
+        archive.extractall(target_dir, filter="data")
+
+    def _resolve_output_archive_root(self, extracted_dir: Path) -> Path | None:
+        for candidate in (
+            extracted_dir / "output",
+            extracted_dir / "turnstile" / "output",
+        ):
+            if candidate.exists():
+                return candidate
+        if any(extracted_dir.iterdir()):
+            return extracted_dir
+        return None
+
+    def _copy_directory_contents(self, source_dir: Path, output_dir: Path) -> None:
+        for path in source_dir.rglob("*"):
+            relative_path = path.relative_to(source_dir)
+            destination = output_dir / relative_path
+            if path.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
 
     def _labels(self, *, service_id: str, mode: str, job_id: str | None = None) -> dict[str, str]:
         prefix = self._settings.docker_label_prefix
@@ -433,10 +522,7 @@ class DockerRuntimeController(RuntimeController):
                 if container is None:
                     raise RuntimeError(f"Warm service container '{container_id}' disappeared")
                 status = (
-                    getattr(container, "attrs", {})
-                    .get("State", {})
-                    .get("Health", {})
-                    .get("Status")
+                    getattr(container, "attrs", {}).get("State", {}).get("Health", {}).get("Status")
                 )
                 if status == "healthy":
                     return

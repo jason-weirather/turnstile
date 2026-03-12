@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.core.celery_app import celery_app
 from app.models.health import DependencyHealth, HealthResponse, QueueHealth
 from app.models.ops import (
+    CapabilityView,
     JobsSnapshot,
     QueueSnapshot,
     RuntimeSnapshot,
@@ -47,6 +48,22 @@ def get_services_snapshot() -> ServicesSnapshot:
             )
         )
     return ServicesSnapshot(services=services)
+
+
+def get_capability_views() -> list[CapabilityView]:
+    return [
+        CapabilityView(
+            capability_id=capability.capability_id,
+            method=capability.method,
+            path=capability.path,
+            summary=capability.summary,
+            execution_mode=capability.execution_mode,
+            queue_lane=capability.queue_lane,
+            adapter_type=capability.adapter_type,
+            default_service_selection=capability.default_service_selection,
+        )
+        for capability in get_capability_registry().list_capabilities()
+    ]
 
 
 def get_queue_snapshots() -> list[QueueSnapshot]:

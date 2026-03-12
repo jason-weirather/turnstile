@@ -1,44 +1,54 @@
 # Single-Server Deployment Notes
 
-This document expands the deployment path in `README.md` for the intended Turnstile target: one server, one scarce GPU, Dockerized control plane, warm HTTP backends, and ephemeral command-backed jobs.
+This document covers the intended deployment target for Turnstile: one server, one scarce GPU, a Dockerized control plane, warm HTTP backends, and ephemeral command-backed jobs.
 
 ## Prerequisites
 
 - Docker Engine installed and running
-- Redis reachable from the control plane and workers
+- Redis reachable from the API and workers
 - If GPU-backed containers are used:
   - NVIDIA drivers installed on the host
   - NVIDIA Container Toolkit installed
-  - Docker configured to launch GPU workloads
+  - Docker configured for GPU workloads
 
-## Docker Access Choices
+## Docker Access
 
 Socket mount:
 
-- Bind-mount `/var/run/docker.sock` into the API and worker containers
+- Mount `/var/run/docker.sock` into the API and worker containers
 - Leave `TURNSTILE_DOCKER_HOST` empty
 - This is the default in `docker-compose.yml`
 
-Remote Docker daemon:
+Remote daemon:
 
-- Set `DOCKER_HOST` and `TURNSTILE_DOCKER_HOST`
-- Ensure the API and workers can reach that endpoint
-- Remove the socket mount if it is not required
+- Set `DOCKER_HOST` and `TURNSTILE_DOCKER_HOST` to the same endpoint
+- Ensure the API and workers can reach it
+- Remove the socket mount if it is not needed
 
-## Warm-Service Networking
+If Docker is unreachable, `GET /healthz` and `GET /ops/runtime` will report that directly.
 
-Managed warm services need to be reachable from the worker that forwards requests to them.
+## Compose Networking
 
-Recommended option:
+The shipped Compose file declares an explicit bridge network named `turnstile`.
 
-- Set `TURNSTILE_DOCKER_NETWORK=turnstile_default`
-- Launch Turnstile through the provided Compose file
-- Turnstile starts warm service containers on the same bridge network and reaches them by container name
+- `api`, `worker-gpu`, `worker-cpu`, `flower`, and `redis` all join `turnstile`
+- managed warm service containers are started on that same network
+- Turnstile addresses warm services by their generated Docker container name while they are attached to `turnstile`
 
-Fallback option:
+If you deploy outside Compose:
 
-- Leave `TURNSTILE_DOCKER_NETWORK` empty
-- Set `TURNSTILE_DOCKER_SERVICE_HOST` to the hostname or IP the worker should use for published ports
+- leave `TURNSTILE_DOCKER_NETWORK` empty
+- set `TURNSTILE_DOCKER_SERVICE_HOST` to the hostname or IP used for published ports
+
+## Ephemeral Command Containers
+
+Ephemeral `container_command` services do not rely on host bind mounts for request or artifact exchange.
+
+- before start, Turnstile uploads `/turnstile/input/request.json` into the child container with Docker archive copy APIs
+- the child container writes any outputs under `/turnstile/output`
+- after completion, Turnstile downloads `/turnstile/output` back out and records artifacts from the extracted files
+
+This design works when Turnstile itself is running in a container and talking to a host Docker daemon through the mounted Docker socket. Bind-mounted temp paths created inside the worker container are no longer part of the contract.
 
 ## Compose Layout
 
@@ -50,18 +60,23 @@ The shipped Compose file starts:
 - `flower`
 - `redis`
 
-Both workers and the API receive Docker access because all three may need runtime control:
+Both workers and the API receive Docker access:
 
-- the workers launch and monitor containers
+- workers launch and monitor containers
 - the API handles cancellation requests
 - the API reports Docker health in `/healthz` and `/ops/runtime`
 
+The Celery app target is `worker:celery_app` for workers and Flower.
+
 ## Operational Checks
+
+Check:
 
 - `GET /healthz`
 - `GET /ops/runtime`
 - `GET /ops/jobs`
 - `GET /ops/services`
+- `GET /ops/capabilities`
 - `GET /ops/queues`
 - Flower on port `5555`
 
@@ -71,15 +86,29 @@ Before treating the deployment as healthy, confirm:
 - Docker is reachable
 - `cpu` and `gpu` lanes both appear in `/ops/queues`
 - the expected workers are attached to those lanes
+- loaded capabilities appear in `/ops/capabilities`
 - warm services appear in `/ops/services` after first use
+
+## Troubleshooting
+
+- `httpx` import failures in containers:
+  - rebuild after updating runtime dependencies; the image installs `pip install -e .`
+- Flower startup fails:
+  - confirm the image includes the `flower` package and the container uses `celery -A worker:celery_app flower`
+- Docker socket access fails:
+  - confirm `/var/run/docker.sock` is mounted into the API and worker containers and readable by the container user
+- Warm service networking fails:
+  - confirm `TURNSTILE_DOCKER_NETWORK=turnstile` and that the control-plane services are also attached to `turnstile`
+- Artifact or request file exchange fails for ephemeral jobs:
+  - confirm the Docker daemon is reachable; Turnstile depends on Docker archive copy APIs to transfer `/turnstile/input` and `/turnstile/output`
 
 ## Extending the Runtime
 
-The concrete example configs shipped with the repo live in:
+The config source of truth lives in:
 
 - `config/capabilities/`
 - `config/services/`
 - `config/requests/`
 - `config/responses/`
 
-Use those files as the source of truth for supported config shape, not the RFC document.
+Use those files, plus `GET /ops/capabilities`, as the source of truth for supported contract shape.
