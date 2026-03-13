@@ -27,7 +27,7 @@ Remote daemon:
 - Ensure the API and workers can reach it
 - Remove the socket mount if it is not needed
 
-If Docker is unreachable, `GET /healthz` and `GET /ops/runtime` will report that directly.
+If Docker is unreachable, `GET /healthz`, `GET /readyz`, and `GET /ops/runtime` will report that directly.
 
 ## Compose Networking
 
@@ -66,7 +66,7 @@ Both workers and the API receive Docker access:
 
 - workers launch and monitor containers
 - the API handles cancellation requests
-- the API reports Docker health in `/healthz` and `/ops/runtime`
+- the API reports liveness in `/healthz` and submission readiness in `/readyz`
 
 The Celery app target is `worker:celery_app` for workers and Flower.
 
@@ -75,6 +75,8 @@ The Celery app target is `worker:celery_app` for workers and Flower.
 Check:
 
 - `GET /healthz`
+- `GET /readyz`
+- `GET /ops/readiness`
 - `GET /ops/runtime`
 - `GET /ops/jobs`
 - `GET /ops/services`
@@ -86,8 +88,9 @@ Before treating the deployment as healthy, confirm:
 
 - Redis is reachable
 - Docker is reachable
+- `GET /readyz` returns success before you submit any async work
 - `cpu` and `gpu` lanes both appear in `/ops/queues`
-- the expected workers are attached to those lanes
+- the expected workers are attached to those lanes and marked `submission_ready`
 - loaded capabilities appear in `/ops/capabilities`
 - warm services appear in `/ops/services` after first use
 
@@ -103,6 +106,12 @@ Before treating the deployment as healthy, confirm:
   - confirm `TURNSTILE_DOCKER_NETWORK=turnstile` and that the control-plane services are also attached to `turnstile`
 - Artifact or request file exchange fails for ephemeral jobs:
   - confirm the Docker daemon is reachable; Turnstile depends on Docker archive copy APIs to transfer `/turnstile/input` and `/turnstile/output`
+- Jobs stay `queued` forever:
+  - do not trust `/healthz` alone; check `/readyz` and `/ops/readiness`
+  - inspect `/ops/runtime` and `/ops/queues`
+  - inspect `docker compose ps`
+  - inspect `docker compose logs worker-gpu worker-cpu`
+  - cancel stranded queued jobs explicitly with `POST /ops/queues/{lane}/cancel`
 
 ## Extending the Runtime
 

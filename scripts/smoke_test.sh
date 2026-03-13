@@ -194,9 +194,10 @@ queue_names = {item["lane"] for item in data.get("queues", [])}
 ok = (
     data.get("redis_reachable") is True
     and data.get("docker_reachable") is True
+    and data.get("submission_ready") is True
     and {"cpu", "gpu"} <= queue_names
-    and lanes.get("cpu", {}).get("healthy") is True
-    and lanes.get("gpu", {}).get("healthy") is True
+    and lanes.get("cpu", {}).get("submission_ready") is True
+    and lanes.get("gpu", {}).get("submission_ready") is True
 )
 raise SystemExit(0 if ok else 1)
 '
@@ -333,6 +334,8 @@ main() {
     || fail "runtime did not report healthy cpu/gpu workers and reachable Docker"
 
   show_json_endpoint /healthz
+  show_json_endpoint /readyz
+  show_json_endpoint /ops/readiness
   show_json_endpoint /ops/capabilities
   show_json_endpoint /ops/services
   show_json_endpoint /ops/runtime

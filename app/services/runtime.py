@@ -104,22 +104,12 @@ class StubRuntimeController(RuntimeController):
         payload: dict[str, object],
         job_id: str,
     ) -> EphemeralExecutionResult:
-        result_payload: dict[str, object]
-        audio_url = payload.get("audio_url")
-        if isinstance(audio_url, str):
-            result_payload = {
-                "text": f"transcribed:{audio_url}",
-                "language": str(payload.get("language", "auto")),
-                "transcript_file": "transcript.txt",
-                "service_id": service.service_id,
-            }
-        else:
-            result_payload = {
-                "adapter": "container_command",
-                "service_id": service.service_id,
-                "job_id": job_id,
-                "echo": payload,
-            }
+        result_payload: dict[str, object] = {
+            "adapter": "container_command",
+            "service_id": service.service_id,
+            "job_id": job_id,
+            "echo": payload,
+        }
         return EphemeralExecutionResult(
             container_id=f"stub-{job_id}",
             stdout=json.dumps(result_payload, sort_keys=True),
@@ -144,14 +134,6 @@ class StubRuntimeController(RuntimeController):
         job_id: str,
     ) -> dict[str, object] | None:
         del job_id
-        prompt = payload.get("prompt")
-        if isinstance(prompt, str):
-            return {
-                "image_url": f"memory://artifacts/{prompt.replace(' ', '-')}.png",
-                "style": str(payload.get("style", "default")),
-                "backend": "warm-http",
-                "service_id": service.service_id,
-            }
         return {
             "adapter": "http_forward_json",
             "service_id": service.service_id,

@@ -33,6 +33,8 @@ docker compose up -d --build
 
 ```bash
 curl -fsS http://localhost:8000/healthz | python3 -m json.tool
+curl -fsS http://localhost:8000/readyz | python3 -m json.tool
+curl -fsS http://localhost:8000/ops/readiness | python3 -m json.tool
 curl -fsS http://localhost:8000/ops/capabilities | python3 -m json.tool
 curl -fsS http://localhost:8000/ops/services | python3 -m json.tool
 curl -fsS http://localhost:8000/ops/runtime | python3 -m json.tool
@@ -41,11 +43,15 @@ curl -fsS http://localhost:8000/ops/queues | python3 -m json.tool
 
 Expected checkpoints:
 
-- `/healthz` reports Redis and Docker reachable.
+- `/healthz` reports liveness and dependency reachability.
+- `/readyz` returns success before you submit any async job.
+- `/ops/readiness` shows `submission_ready: true` for both `cpu` and `gpu`.
 - `/ops/capabilities` includes `example.http.echo` and `example.command.run`.
 - `/ops/services` lists the shipped mock services from `config/services/`.
-- `/ops/runtime` shows `docker_reachable: true` and healthy `cpu` and `gpu` worker lanes.
+- `/ops/runtime` shows `docker_reachable: true` and `submission_ready: true` for both `cpu` and `gpu`.
 - `/ops/queues` includes both `cpu` and `gpu`.
+
+Do not submit async jobs until `GET /readyz` succeeds. `GET /healthz` alone is not a submission gate.
 
 5. Submit one warm HTTP-backed example job:
 
@@ -197,3 +203,37 @@ make smoke-docker-keepalive
 The script lives at `scripts/smoke_test.sh`. It fails fast, exits nonzero on any error, and verifies both the warm HTTP route and the ephemeral command-backed route through `GET /v1/jobs/{job_id}`.
 
 The script performs its API and Flower probes from inside the Docker Compose network, so it remains reliable even if `localhost:8000` or `localhost:5555` is already claimed by another local process.
+
+## Recovery And Troubleshooting
+
+If jobs stay queued forever, inspect:
+
+```bash
+curl -sS http://localhost:8000/readyz | python3 -m json.tool
+curl -sS http://localhost:8000/ops/readiness | python3 -m json.tool
+curl -sS http://localhost:8000/ops/runtime | python3 -m json.tool
+curl -sS http://localhost:8000/ops/queues | python3 -m json.tool
+docker compose ps
+docker compose logs worker-gpu worker-cpu
+```
+
+If queued jobs are already stranded on a dead lane, cancel them explicitly:
+
+```bash
+curl -fsS -X POST http://localhost:8000/ops/queues/gpu/cancel | python3 -m json.tool
+curl -fsS -X POST http://localhost:8000/ops/queues/cpu/cancel | python3 -m json.tool
+```
+
+## Notebook Check
+
+In Jupyter or a notebook, verify readiness before submit:
+
+```python
+import requests
+
+ready = requests.get("http://localhost:8000/readyz", timeout=5)
+ready.raise_for_status()
+
+runtime = requests.get("http://localhost:8000/ops/readiness", timeout=5).json()
+assert all(lane["submission_ready"] for lane in runtime["worker_lanes"]), runtime
+```

@@ -94,10 +94,10 @@ def test_http_forward_json_adapter_normalizes_response() -> None:
 
 def test_container_command_adapter_normalizes_runtime_result() -> None:
     capability = CapabilityDefinition(
-        capability_id="audio.transcribe",
+        capability_id="example.command.run",
         method="POST",
-        path="/audio/transcribe",
-        summary="Transcribe audio",
+        path="/example/command/run",
+        summary="Run command example",
         request_schema=Path("request.json"),
         response_schema=Path("response.json"),
         execution_mode=ExecutionMode.ASYNC,
@@ -107,7 +107,7 @@ def test_container_command_adapter_normalizes_runtime_result() -> None:
     )
     service = ServiceDescriptor(
         service_id="mock-container",
-        capabilities=["audio.transcribe"],
+        capabilities=["example.command.run"],
         image="ghcr.io/example/mock-container:latest",
         mode=ServiceMode.EPHEMERAL,
         gpu_required=False,
@@ -121,7 +121,7 @@ def test_container_command_adapter_normalizes_runtime_result() -> None:
     result = ContainerCommandAdapter(runtime_controller=FakeRuntime()).execute(
         capability,
         service,
-        {"audio_url": "https://example.com/file.wav"},
+        {"text": "hello"},
         job_id="job-2",
     )
 

@@ -27,10 +27,42 @@ class QueueSnapshot(BaseModel):
     active_service_id: str | None
 
 
+class InstanceIdentity(BaseModel):
+    instance_id: str
+    hostname: str
+    started_at: datetime
+
+
+class WorkerInspectionSnapshot(BaseModel):
+    status: str
+    timeout_s: float
+    attempts: int
+    ping_workers: list[str] = Field(default_factory=list)
+    active_queue_workers: list[str] = Field(default_factory=list)
+    workers_by_lane: dict[str, list[str]] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+    detail: str | None = None
+
+
 class WorkerLaneStatus(BaseModel):
     lane: str
     workers: list[str] = Field(default_factory=list)
     healthy: bool
+    submission_ready: bool = False
+    reason: str | None = None
+
+
+class ReadinessSnapshot(BaseModel):
+    status: str
+    ready: bool
+    detail: str | None = None
+    runtime_mode: str
+    redis_reachable: bool
+    docker_reachable: bool
+    required_lanes: list[str] = Field(default_factory=list)
+    worker_lanes: list[WorkerLaneStatus] = Field(default_factory=list)
+    worker_inspection: WorkerInspectionSnapshot
+    identity: InstanceIdentity
 
 
 class RuntimeSnapshot(BaseModel):
@@ -40,7 +72,11 @@ class RuntimeSnapshot(BaseModel):
     warm_services: list[WarmServiceState] = Field(default_factory=list)
     redis_reachable: bool
     docker_reachable: bool
+    submission_ready: bool
+    required_lanes: list[str] = Field(default_factory=list)
     worker_lanes: list[WorkerLaneStatus] = Field(default_factory=list)
+    worker_inspection: WorkerInspectionSnapshot
+    identity: InstanceIdentity
 
 
 class JobsSnapshot(BaseModel):
@@ -65,3 +101,9 @@ class CapabilityView(BaseModel):
     queue_lane: QueueLane
     adapter_type: AdapterType
     default_service_selection: str
+
+
+class LaneQueueActionResponse(BaseModel):
+    lane: str
+    cancelled_count: int
+    cancelled_job_ids: list[str] = Field(default_factory=list)

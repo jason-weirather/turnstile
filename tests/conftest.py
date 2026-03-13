@@ -8,6 +8,7 @@ import pytest
 from app.services import job_store as job_store_module
 from app.services import jobs as jobs_service
 from app.services import orchestrator
+from app.services import readiness as readiness_module
 from app.services import runtime as runtime_module
 
 
@@ -41,6 +42,30 @@ def fake_redis(monkeypatch: pytest.MonkeyPatch) -> Generator[fakeredis.FakeRedis
 
     store.clear()
     runtime_module.get_runtime_controller.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def healthy_worker_inspect(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    class FakeInspect:
+        def ping(self) -> dict[str, dict[str, str]]:
+            return {
+                "worker-cpu@test": {"ok": "pong"},
+                "worker-gpu@test": {"ok": "pong"},
+            }
+
+        def active_queues(self) -> dict[str, list[dict[str, str]]]:
+            return {
+                "worker-cpu@test": [{"name": "cpu"}],
+                "worker-gpu@test": [{"name": "gpu"}],
+            }
+
+    monkeypatch.setattr(
+        readiness_module,
+        "get_celery_inspector",
+        lambda timeout_s: FakeInspect(),
+    )
+
+    yield
 
 
 @pytest.fixture(autouse=True)

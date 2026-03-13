@@ -109,9 +109,10 @@ Use [docs/smoke-test.md](smoke-test.md) for the primary clean-checkout path. Tha
 - copying `.env.example` to `.env`
 - building the example backend images
 - starting `docker compose`
-- checking `/healthz`, `/ops/capabilities`, `/ops/services`, `/ops/runtime`, and `/ops/queues`
+- checking `/healthz`, `/readyz`, `/ops/readiness`, `/ops/capabilities`, `/ops/services`, `/ops/runtime`, and `/ops/queues`
 - submitting and polling `POST /v1/example/http/echo`
 - submitting and polling `POST /v1/example/command/run`
+- cancelling stranded queued jobs with `POST /ops/queues/{lane}/cancel`
 - optionally checking Flower
 - shutting the stack down cleanly
 

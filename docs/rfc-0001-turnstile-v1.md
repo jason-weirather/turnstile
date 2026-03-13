@@ -84,12 +84,12 @@ passthrough.
 
 ### Endpoints
 
-- `POST /v1/image/generate`
-- `POST /v1/image/edit`
-- `POST /v1/audio/transcribe`
+- `POST /v1/example/http/echo`
+- `POST /v1/example/command/run`
 - `GET /v1/jobs/{id}`
 - `POST /v1/jobs/{id}/cancel`
 - `GET /healthz`
+- `GET /readyz`
 - `GET /metrics`
 - `GET /docs`
 - `GET /redoc`

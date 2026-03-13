@@ -1,35 +1,38 @@
 from __future__ import annotations
 
-from app.core.celery_app import celery_app
 from app.models.health import DependencyHealth, HealthResponse, QueueHealth
 from app.models.ops import (
     CapabilityView,
     JobsSnapshot,
+    LaneQueueActionResponse,
     QueueSnapshot,
+    ReadinessSnapshot,
     RuntimeSnapshot,
     ServiceRuntimeView,
     ServicesSnapshot,
-    WorkerLaneStatus,
 )
 from app.services.capabilities import get_capability_registry
 from app.services.job_store import get_job_store
-from app.services.jobs import list_job_responses
+from app.services.jobs import cancel_queued_jobs_for_lane, list_job_responses
+from app.services.readiness import get_readiness_snapshot
 from app.services.registry import get_service_registry
-from app.services.runtime import get_runtime_controller
 
 
 def get_runtime_snapshot() -> RuntimeSnapshot:
     store = get_job_store()
-    queue_lanes = _queue_lanes()
-    docker_reachable, _ = get_runtime_controller().docker_reachable()
+    readiness = get_readiness_snapshot()
     return RuntimeSnapshot(
-        queues=store.queue_snapshots(queue_lanes),
+        queues=store.queue_snapshots(readiness.required_lanes),
         active_job_id=store.active_job_id(),
         active_service_id=store.active_service_id(),
         warm_services=store.list_warm_services(),
-        redis_reachable=store.ping(),
-        docker_reachable=docker_reachable,
-        worker_lanes=_worker_lane_status(queue_lanes),
+        redis_reachable=readiness.redis_reachable,
+        docker_reachable=readiness.docker_reachable,
+        submission_ready=readiness.ready,
+        required_lanes=readiness.required_lanes,
+        worker_lanes=readiness.worker_lanes,
+        worker_inspection=readiness.worker_inspection,
+        identity=readiness.identity,
     )
 
 
@@ -67,17 +70,19 @@ def get_capability_views() -> list[CapabilityView]:
 
 
 def get_queue_snapshots() -> list[QueueSnapshot]:
-    return get_job_store().queue_snapshots(_queue_lanes())
+    return get_job_store().queue_snapshots(get_readiness_snapshot().required_lanes)
 
 
 def get_health_snapshot() -> HealthResponse:
     store = get_job_store()
-    docker_reachable, docker_detail = get_runtime_controller().docker_reachable()
-    runtime = get_runtime_snapshot()
-    queue_statuses = _worker_lane_status(_queue_lanes())
+    readiness = get_readiness_snapshot()
+    queues = store.queue_snapshots(readiness.required_lanes)
     health_queues = []
-    for queue in runtime.queues:
-        lane_status = next((item for item in queue_statuses if item.lane == queue.lane), None)
+    for queue in queues:
+        lane_status = next(
+            (item for item in readiness.worker_lanes if item.lane == queue.lane),
+            None,
+        )
         health_queues.append(
             QueueHealth(
                 lane=queue.lane,
@@ -88,45 +93,31 @@ def get_health_snapshot() -> HealthResponse:
             )
         )
 
-    status = "ok" if store.ping() and docker_reachable else "degraded"
+    readiness_reasons = [lane.reason for lane in readiness.worker_lanes if lane.reason is not None]
+    if not readiness.redis_reachable:
+        readiness_reasons.insert(0, "Redis is unreachable.")
+    if not readiness.docker_reachable:
+        readiness_reasons.insert(0, "Docker is unreachable in docker runtime mode.")
+
+    status = "ok" if readiness.redis_reachable and readiness.docker_reachable else "degraded"
     return HealthResponse(
         status=status,
+        ready=readiness.ready,
+        readiness_reasons=readiness_reasons,
         redis=DependencyHealth(reachable=store.ping()),
-        docker=DependencyHealth(reachable=docker_reachable, detail=docker_detail),
+        docker=DependencyHealth(
+            reachable=readiness.docker_reachable,
+            detail=readiness.detail if not readiness.docker_reachable else None,
+        ),
         queues=health_queues,
-        active_job_id=runtime.active_job_id,
-        active_service_id=runtime.active_service_id,
+        active_job_id=store.active_job_id(),
+        active_service_id=store.active_service_id(),
     )
 
 
-def _queue_lanes() -> list[str]:
-    return sorted(
-        {
-            capability.queue_lane.value
-            for capability in get_capability_registry().list_capabilities()
-        }
-    )
+def get_readiness_status() -> ReadinessSnapshot:
+    return get_readiness_snapshot()
 
 
-def _worker_lane_status(queue_lanes: list[str]) -> list[WorkerLaneStatus]:
-    workers_by_lane = {lane: set[str]() for lane in queue_lanes}
-    try:
-        inspect = celery_app.control.inspect(timeout=1.0)
-        active_queues = inspect.active_queues() or {}
-    except Exception:
-        active_queues = {}
-
-    for worker_name, queues in active_queues.items():
-        for queue in queues:
-            lane = str(queue.get("name"))
-            if lane in workers_by_lane:
-                workers_by_lane[lane].add(worker_name)
-
-    return [
-        WorkerLaneStatus(
-            lane=lane,
-            workers=sorted(workers_by_lane[lane]),
-            healthy=bool(workers_by_lane[lane]),
-        )
-        for lane in queue_lanes
-    ]
+def cancel_lane_queue(lane: str) -> LaneQueueActionResponse:
+    return cancel_queued_jobs_for_lane(lane)

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.routes import health, jobs, ops, services
 from app.models.capability import ExecutionMode
 from app.services.capabilities import get_capability_registry
-from app.services.jobs import execute_capability_request
+from app.services.jobs import QueueUnavailableError, execute_capability_request
 
 
 def build_api_router() -> APIRouter:
@@ -35,10 +35,16 @@ def _build_capability_router() -> APIRouter:
         ) -> Any:
             def endpoint(payload: payload_model) -> dict[str, object]:  # type: ignore[valid-type]
                 parsed_payload = cast(BaseModel, payload)
-                return execute_capability_request(
-                    capability_id,
-                    parsed_payload.model_dump(exclude_none=True),
-                )
+                try:
+                    return execute_capability_request(
+                        capability_id,
+                        parsed_payload.model_dump(exclude_none=True),
+                    )
+                except QueueUnavailableError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail=exc.as_detail(),
+                    ) from exc
 
             endpoint.__name__ = f"{capability_id.replace('.', '_')}_endpoint"
             endpoint.__annotations__["payload"] = payload_model

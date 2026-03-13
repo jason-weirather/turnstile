@@ -37,7 +37,7 @@
 
 - FastAPI app, Celery worker, Redis, and Flower are wired.
 - Capability routes are loaded from `config/capabilities/*.yaml` and visible in OpenAPI.
-- `POST /v1/image/generate` enqueues onto the `gpu` queue and job status is observable.
+- `POST /v1/example/http/echo` and `POST /v1/example/command/run` exercise async routing and job status is observable.
 - `GET /ops/capabilities` reflects loaded capabilities.
 - Tests pass locally.
 - README documents exact startup commands and expected endpoints.

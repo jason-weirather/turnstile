@@ -63,6 +63,18 @@ class RedisJobStore:
             self._client.zrem(self.JOB_INDEX_KEY, *stale_ids)
         return jobs
 
+    def list_jobs_for_lane(
+        self,
+        lane: str,
+        *,
+        statuses: set[JobStatus] | None = None,
+    ) -> list[JobRecord]:
+        return [
+            job
+            for job in self._all_jobs()
+            if job.queue_lane.value == lane and (statuses is None or job.status in statuses)
+        ]
+
     def set_status(
         self,
         job_id: str,

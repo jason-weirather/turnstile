@@ -17,7 +17,10 @@ from app.services.registry import get_service_registry
 def test_shared_status_lookup_uses_redis_backing() -> None:
     client = TestClient(app)
 
-    submit_response = client.post("/v1/image/generate", json={"prompt": "status check"})
+    submit_response = client.post(
+        "/v1/example/command/run",
+        json={"text": "status check", "artifact_name": "status.txt"},
+    )
     job_id = submit_response.json()["job_id"]
 
     shared_view = job_store_module.RedisJobStore(job_store_module.get_redis_client()).get(job_id)
@@ -27,23 +30,23 @@ def test_shared_status_lookup_uses_redis_backing() -> None:
 
 def test_gpu_queue_order_and_state_transitions() -> None:
     store = job_store_module.get_job_store()
-    service = get_service_registry().resolve_for_capability("image.generate")
+    service = get_service_registry().resolve_for_capability("example.http.echo")
 
     first_job = JobRecord(
         job_id="job-1",
-        capability="image.generate",
+        capability="example.http.echo",
         queue_lane=QueueLane.GPU,
         requested_service_id=service.service_id,
         selected_service_id=service.service_id,
-        request_payload={"prompt": "first"},
+        request_payload={"text": "first"},
     )
     second_job = JobRecord(
         job_id="job-2",
-        capability="image.generate",
+        capability="example.http.echo",
         queue_lane=QueueLane.GPU,
         requested_service_id=service.service_id,
         selected_service_id=service.service_id,
-        request_payload={"prompt": "second"},
+        request_payload={"text": "second"},
     )
     store.enqueue(first_job)
     store.enqueue(second_job)
@@ -52,8 +55,8 @@ def test_gpu_queue_order_and_state_transitions() -> None:
         target=orchestrator.run_capability_job,
         kwargs={
             "job_id": "job-1",
-            "capability_id": "image.generate",
-            "payload": {"prompt": "first"},
+            "capability_id": "example.http.echo",
+            "payload": {"text": "first"},
             "service_id": service.service_id,
         },
     )
@@ -61,8 +64,8 @@ def test_gpu_queue_order_and_state_transitions() -> None:
         target=orchestrator.run_capability_job,
         kwargs={
             "job_id": "job-2",
-            "capability_id": "image.generate",
-            "payload": {"prompt": "second"},
+            "capability_id": "example.http.echo",
+            "payload": {"text": "second"},
             "service_id": service.service_id,
         },
     )
@@ -99,7 +102,10 @@ def test_cancel_queued_job() -> None:
     execute_capability_task.app.conf.broker_url = "memory://"
 
     client = TestClient(app)
-    submit_response = client.post("/v1/image/generate", json={"prompt": "cancel me"})
+    submit_response = client.post(
+        "/v1/example/http/echo",
+        json={"text": "cancel me"},
+    )
     job_id = submit_response.json()["job_id"]
 
     cancel_response = client.post(f"/v1/jobs/{job_id}/cancel")
@@ -107,6 +113,35 @@ def test_cancel_queued_job() -> None:
     assert cancel_response.json()["status"] == "cancelled"
 
     job_response = client.get(f"/v1/jobs/{job_id}")
+    assert job_response.status_code == 200
+    assert job_response.json()["status"] == "cancelled"
+
+
+def test_cancel_queued_jobs_for_lane_via_ops_endpoint() -> None:
+    store = job_store_module.get_job_store()
+    service = get_service_registry().resolve_for_capability("example.http.echo")
+    store.enqueue(
+        JobRecord(
+            job_id="job-stuck",
+            capability="example.http.echo",
+            queue_lane=QueueLane.GPU,
+            requested_service_id=service.service_id,
+            selected_service_id=service.service_id,
+            request_payload={"text": "stuck"},
+        )
+    )
+
+    client = TestClient(app)
+    response = client.post("/ops/queues/gpu/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "lane": "gpu",
+        "cancelled_count": 1,
+        "cancelled_job_ids": ["job-stuck"],
+    }
+
+    job_response = client.get("/v1/jobs/job-stuck")
     assert job_response.status_code == 200
     assert job_response.json()["status"] == "cancelled"
 

@@ -44,15 +44,12 @@ def test_repo_config_examples_load_and_validate() -> None:
     assert {capability.capability_id for capability in capabilities} >= {
         "example.http.echo",
         "example.command.run",
-        "image.generate",
-        "audio.transcribe",
     }
     assert {service.service_id for service in services} >= {
         "mock-http-alpha",
         "mock-http-beta",
         "mock-command-alpha",
-        "mock-image-generator",
-        "mock-audio-transcriber",
+        "mock-command-beta",
     }
 
 

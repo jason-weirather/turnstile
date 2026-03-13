@@ -9,16 +9,36 @@ from app.core.celery_app import celery_app
 from app.core.config import get_settings
 from app.models.capability import CapabilityDefinition, ExecutionMode
 from app.models.job import JobCancelResponse, JobRecord, JobResponse, JobStatus
+from app.models.ops import LaneQueueActionResponse
 from app.models.service import ServiceDescriptor
 from app.services.capabilities import get_capability_registry
 from app.services.job_store import get_job_store
 from app.services.orchestrator import run_capability_job
+from app.services.readiness import get_required_async_lanes, is_lane_submission_ready
 from app.services.registry import get_service_registry
 from app.services.runtime import get_runtime_controller
 from app.tasks import execute_capability_task
 
 
+class QueueUnavailableError(RuntimeError):
+    def __init__(self, lane: str, detail: str) -> None:
+        self.lane = lane
+        self.detail = detail
+        super().__init__(detail)
+
+    def as_detail(self) -> dict[str, str]:
+        return {
+            "error_code": "queue_unavailable",
+            "lane": self.lane,
+            "detail": self.detail,
+        }
+
+
 def execute_capability_request(capability_id: str, payload: dict[str, object]) -> dict[str, Any]:
+    capability = get_capability_registry().get(capability_id)
+    if capability.execution_mode == ExecutionMode.ASYNC:
+        _ensure_async_lane_available(capability)
+
     capability, service, job_record = _prepare_job_record(capability_id, payload)
     if capability.execution_mode == ExecutionMode.SYNC:
         return run_capability_job(
@@ -39,9 +59,12 @@ def execute_capability_request(capability_id: str, payload: dict[str, object]) -
 
 
 def submit_capability_job(capability_id: str, payload: dict[str, object]) -> dict[str, str]:
-    capability, service, job_record = _prepare_job_record(capability_id, payload)
+    capability = get_capability_registry().get(capability_id)
     if capability.execution_mode != ExecutionMode.ASYNC:
         raise ValueError(f"Capability '{capability_id}' is not configured for async execution.")
+    _ensure_async_lane_available(capability)
+
+    capability, service, job_record = _prepare_job_record(capability_id, payload)
 
     _dispatch_capability_job(
         job_id=job_record.job_id,
@@ -132,6 +155,27 @@ def cancel_job(job_id: str) -> JobCancelResponse | None:
     return JobCancelResponse(job_id=job_id, status=JobStatus.CANCELLED)
 
 
+def cancel_queued_jobs_for_lane(lane: str) -> LaneQueueActionResponse:
+    required_lanes = get_required_async_lanes()
+    if lane not in required_lanes:
+        raise KeyError(lane)
+
+    cancelled_job_ids: list[str] = []
+    for job in get_job_store().list_jobs_for_lane(
+        lane,
+        statuses={JobStatus.QUEUED, JobStatus.WAITING_FOR_GPU},
+    ):
+        cancelled = cancel_job(job.job_id)
+        if cancelled is not None:
+            cancelled_job_ids.append(job.job_id)
+
+    return LaneQueueActionResponse(
+        lane=lane,
+        cancelled_count=len(cancelled_job_ids),
+        cancelled_job_ids=cancelled_job_ids,
+    )
+
+
 def _job_response(record: JobRecord) -> JobResponse:
     return JobResponse(
         job_id=record.job_id,
@@ -150,4 +194,19 @@ def _job_response(record: JobRecord) -> JobResponse:
         finished_at=record.finished_at,
         result=record.result_payload,
         error=record.error_detail,
+    )
+
+
+def _ensure_async_lane_available(capability: CapabilityDefinition) -> None:
+    if get_settings().allow_enqueue_without_workers:
+        return
+
+    lane = capability.queue_lane.value
+    ready, detail = is_lane_submission_ready(lane)
+    if ready:
+        return
+
+    raise QueueUnavailableError(
+        lane=lane,
+        detail=detail or f"No healthy workers are attached to lane '{lane}'.",
     )

@@ -42,21 +42,22 @@ make smoke-docker-keepalive
 Static routes:
 
 - `GET /healthz`
+- `GET /readyz`
 - `GET /v1/services`
 - `GET /v1/jobs/{job_id}`
 - `POST /v1/jobs/{job_id}/cancel`
+- `GET /ops/readiness`
 - `GET /ops/runtime`
 - `GET /ops/jobs`
 - `GET /ops/services`
 - `GET /ops/capabilities`
 - `GET /ops/queues`
+- `POST /ops/queues/{lane}/cancel`
 
 YAML-defined example capability routes shipped in this repo:
 
 - `POST /v1/example/http/echo`
 - `POST /v1/example/command/run`
-- `POST /v1/image/generate`
-- `POST /v1/audio/transcribe`
 
 OpenAPI reflects both the static routes and all loaded capability routes at `GET /openapi.json`.
 
@@ -64,6 +65,7 @@ OpenAPI reflects both the static routes and all loaded capability routes at `GET
 
 - `async` capabilities enqueue a Celery job and return `202 Accepted` with a job record.
 - `sync` capabilities run inline and return the final normalized response directly.
+- By default, async submissions fail fast with `503 queue_unavailable` unless the target lane is submission-ready.
 - The shipped example capabilities are both `async`; `sync` support exists for future config-defined capabilities.
 
 ## Single-Server Deployment
@@ -94,6 +96,8 @@ The shipped Compose file starts:
 - `redis` on `localhost:6379`
 
 Compose declares an explicit `turnstile` bridge network. Managed warm containers join that same network and are addressed by their generated container name from within the control plane.
+
+Do not submit async jobs unless `GET /readyz` returns success and `GET /ops/readiness` shows the target lane as `submission_ready: true`.
 
 For the exact first-run smoke sequence, use [docs/smoke-test.md](docs/smoke-test.md).
 
@@ -200,8 +204,6 @@ Shipped capability examples:
 
 - `config/capabilities/example_http_echo.yaml`
 - `config/capabilities/example_command_run.yaml`
-- `config/capabilities/image_generate.yaml`
-- `config/capabilities/audio_transcribe.yaml`
 
 Warm HTTP capability/service example:
 
@@ -286,15 +288,18 @@ adapter_config:
 
 Use [docs/smoke-test.md](docs/smoke-test.md) for the exact Docker smoke-test sequence, including:
 
+- `GET /readyz`
 - `POST /v1/example/http/echo`
 - `POST /v1/example/command/run`
 - `GET /v1/jobs/{job_id}`
 - `/healthz`
+- `/ops/readiness`
 - `/ops/capabilities`
 - `/ops/services`
 - `/ops/runtime`
 - `/ops/queues`
 - optional Flower checks
+- queued-job recovery with `POST /ops/queues/{lane}/cancel`
 
 For direct backend debugging outside Turnstile, use:
 

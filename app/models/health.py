@@ -16,6 +16,8 @@ class QueueHealth(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    ready: bool
+    readiness_reasons: list[str] = Field(default_factory=list)
     redis: DependencyHealth
     docker: DependencyHealth
     queues: list[QueueHealth]

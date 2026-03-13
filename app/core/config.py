@@ -22,6 +22,18 @@ class Settings(BaseModel):
     runtime_heartbeat_interval_s: float = 1.0
     warm_probe_interval_s: float = 0.5
     ops_job_limit: int = 50
+    allow_enqueue_without_workers: bool = False
+    worker_inspect_timeout_s: float = 1.0
+    worker_inspect_attempts: int = 3
+    worker_inspect_retry_interval_s: float = 0.2
+    instance_id: str | None = None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @lru_cache(maxsize=1)
@@ -49,4 +61,14 @@ def get_settings() -> Settings:
         ),
         warm_probe_interval_s=float(os.getenv("TURNSTILE_WARM_PROBE_INTERVAL_S", "0.5")),
         ops_job_limit=int(os.getenv("TURNSTILE_OPS_JOB_LIMIT", "50")),
+        allow_enqueue_without_workers=_env_bool(
+            "TURNSTILE_ALLOW_ENQUEUE_WITHOUT_WORKERS",
+            False,
+        ),
+        worker_inspect_timeout_s=float(os.getenv("TURNSTILE_WORKER_INSPECT_TIMEOUT_S", "1.0")),
+        worker_inspect_attempts=int(os.getenv("TURNSTILE_WORKER_INSPECT_ATTEMPTS", "3")),
+        worker_inspect_retry_interval_s=float(
+            os.getenv("TURNSTILE_WORKER_INSPECT_RETRY_INTERVAL_S", "0.2")
+        ),
+        instance_id=os.getenv("TURNSTILE_INSTANCE_ID") or None,
     )

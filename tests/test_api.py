@@ -7,8 +7,29 @@ from fastapi.testclient import TestClient
 
 from app.api import router as api_router
 from app.main import app
+from app.services import readiness as readiness_module
 from app.services.capabilities import CapabilityRegistry
 from app.services.definition_loader import DefinitionLoader
+
+
+def _set_worker_inspect(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ping: dict[str, dict[str, str]] | None,
+    active_queues: dict[str, list[dict[str, str]]] | None,
+) -> None:
+    class FakeInspect:
+        def ping(self) -> dict[str, dict[str, str]]:
+            return {} if ping is None else ping
+
+        def active_queues(self) -> dict[str, list[dict[str, str]]]:
+            return {} if active_queues is None else active_queues
+
+    monkeypatch.setattr(
+        readiness_module,
+        "get_celery_inspector",
+        lambda timeout_s: FakeInspect(),
+    )
 
 
 def test_openapi_includes_capability_routes() -> None:
@@ -20,24 +41,32 @@ def test_openapi_includes_capability_routes() -> None:
     paths = response.json()["paths"]
     assert "/v1/example/http/echo" in paths
     assert "/v1/example/command/run" in paths
-    assert "/v1/image/generate" in paths
-    assert "/v1/audio/transcribe" in paths
+    assert "/readyz" in paths
 
 
-def test_invalid_audio_payload_is_rejected() -> None:
+def test_readyz_returns_503_when_workers_are_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = TestClient(app)
+    _set_worker_inspect(monkeypatch, ping=None, active_queues=None)
 
-    response = client.post("/v1/audio/transcribe", json={"language": "en"})
+    response = client.get("/readyz")
 
-    assert response.status_code == 422
+    assert response.status_code == 503
+    body = response.json()
+    assert body["ready"] is False
+    assert body["status"] == "not_ready"
+    lane = next(item for item in body["worker_lanes"] if item["lane"] == "gpu")
+    assert lane["submission_ready"] is False
+    assert lane["reason"] == "No healthy workers are attached to lane 'gpu'."
 
 
-def test_submit_image_job_and_lookup_result() -> None:
+def test_submit_example_http_job_and_lookup_result() -> None:
     client = TestClient(app)
 
     submit_response = client.post(
-        "/v1/image/generate",
-        json={"prompt": "studio portrait", "style": "cinematic"},
+        "/v1/example/http/echo",
+        json={"text": "hello default"},
     )
 
     assert submit_response.status_code == 202
@@ -47,17 +76,18 @@ def test_submit_image_job_and_lookup_result() -> None:
     assert job_response.status_code == 200
     body = job_response.json()
     assert body["status"] == "succeeded"
-    assert body["capability"] == "image.generate"
-    assert body["result_payload"]["backend"] == "warm-http"
-    assert body["result_payload"]["style"] == "cinematic"
+    assert body["capability"] == "example.http.echo"
+    assert body["selected_service_id"] == "mock-http-alpha"
+    assert body["result_payload"]["service_id"] == "mock-http-alpha"
+    assert body["result_payload"]["echo"]["text"] == "hello default"
 
 
-def test_submit_audio_transcribe_job() -> None:
+def test_submit_example_command_job() -> None:
     client = TestClient(app)
 
     submit_response = client.post(
-        "/v1/audio/transcribe",
-        json={"audio_url": "https://example.com/clip.wav", "language": "en"},
+        "/v1/example/command/run",
+        json={"text": "artifact body", "artifact_name": "note.txt"},
     )
 
     assert submit_response.status_code == 202
@@ -67,8 +97,10 @@ def test_submit_audio_transcribe_job() -> None:
     assert job_response.status_code == 200
     body = job_response.json()
     assert body["status"] == "succeeded"
-    assert body["result_payload"]["language"] == "en"
-    assert body["result_payload"]["transcript_file"] == "transcript.txt"
+    assert body["capability"] == "example.command.run"
+    assert body["selected_service_id"] == "mock-command-alpha"
+    assert body["result_payload"]["service_id"] == "mock-command-alpha"
+    assert body["result_payload"]["echo"]["artifact_name"] == "note.txt"
 
 
 def test_submit_example_http_job_with_service_override() -> None:
@@ -118,17 +150,41 @@ def test_submit_example_command_job_with_service_override() -> None:
     assert body["result_payload"]["echo"]["artifact_name"] == "note.txt"
 
 
+def test_async_submit_returns_503_when_target_lane_has_no_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = TestClient(app)
+    _set_worker_inspect(
+        monkeypatch,
+        ping={"worker-cpu@test": {"ok": "pong"}},
+        active_queues={"worker-cpu@test": [{"name": "cpu"}]},
+    )
+
+    response = client.post("/v1/example/http/echo", json={"text": "hello gpu"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "error_code": "queue_unavailable",
+        "lane": "gpu",
+        "detail": "Workers are running, but none are attached to lane 'gpu'.",
+    }
+
+
 def test_ops_and_health_endpoints_expose_runtime_visibility() -> None:
     client = TestClient(app)
 
     health_response = client.get("/healthz")
+    readiness_response = client.get("/readyz")
     runtime_response = client.get("/ops/runtime")
+    readiness_ops_response = client.get("/ops/readiness")
     capabilities_response = client.get("/ops/capabilities")
     queues_response = client.get("/ops/queues")
     services_response = client.get("/ops/services")
 
     assert health_response.status_code == 200
+    assert readiness_response.status_code == 200
     assert runtime_response.status_code == 200
+    assert readiness_ops_response.status_code == 200
     assert capabilities_response.status_code == 200
     assert queues_response.status_code == 200
     assert services_response.status_code == 200
@@ -136,13 +192,40 @@ def test_ops_and_health_endpoints_expose_runtime_visibility() -> None:
     assert sorted(queue["lane"] for queue in queues_response.json()) == ["cpu", "gpu"]
     assert runtime_response.json()["docker_reachable"] is True
     assert health_response.json()["redis"]["reachable"] is True
-    assert len(services_response.json()["services"]) >= 2
+    assert health_response.json()["ready"] is True
+    assert runtime_response.json()["submission_ready"] is True
+    gpu_lane = next(
+        item for item in runtime_response.json()["worker_lanes"] if item["lane"] == "gpu"
+    )
+    assert gpu_lane["submission_ready"] is True
+    assert gpu_lane["reason"] is None
+    assert "identity" in runtime_response.json()
+    assert "worker_inspection" in readiness_ops_response.json()
+    assert len(services_response.json()["services"]) >= 4
     assert {item["capability_id"] for item in capabilities_response.json()} >= {
         "example.http.echo",
         "example.command.run",
-        "audio.transcribe",
-        "image.generate",
     }
+
+
+def test_ops_runtime_reports_worker_readiness_reason_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = TestClient(app)
+    _set_worker_inspect(
+        monkeypatch,
+        ping={"worker-cpu@test": {"ok": "pong"}},
+        active_queues={"worker-cpu@test": [{"name": "cpu"}]},
+    )
+
+    response = client.get("/ops/runtime")
+
+    assert response.status_code == 200
+    gpu_lane = next(item for item in response.json()["worker_lanes"] if item["lane"] == "gpu")
+    assert gpu_lane["workers"] == []
+    assert gpu_lane["healthy"] is False
+    assert gpu_lane["submission_ready"] is False
+    assert gpu_lane["reason"] == "Workers are running, but none are attached to lane 'gpu'."
 
 
 def test_temporary_sync_capability_definition_registers_route(
