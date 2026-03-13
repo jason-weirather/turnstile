@@ -2,323 +2,134 @@
 
 ## Status
 
-Proposed
+Accepted in part
 
 ## Summary
 
-Turnstile is a front door, scheduler, and runtime broker for scarce local
-compute. It presents a typed HTTP API for a small set of media capabilities and
-decides whether each request should be served by a warm container, an ephemeral
-container, or a queued execution lane.
+Turnstile is a typed capability broker for a single server with scarce local compute. It exposes YAML-defined HTTP capabilities, routes them onto `cpu` or `gpu` Celery lanes, and executes them through warm HTTP services or ephemeral command containers managed through Docker.
 
-Turnstile v1 is explicitly not a model server, a workflow engine, or a generic
-container orchestrator. The product boundary is narrow: admit work, arbitrate
-one scarce GPU, manage warm and cold backends, and expose a usable ops surface.
+The implemented system is intentionally narrow:
 
-Tagline: "one API, one scarce GPU, many tools"
+- one server
+- one scarce GPU
+- typed capability endpoints
+- warm services plus ephemeral jobs
+- readiness-gated async submission
+- operator visibility through `/ops/*`
 
-## Goals
+Turnstile is not a generic passthrough proxy, a workflow engine, or a multi-node orchestrator.
 
-- Expose stable, typed endpoints for a curated set of capabilities.
-- Serialize GPU work through a single policy-controlled admission point.
-- Support both warm services and one-shot ephemeral jobs.
-- Keep job state, service state, and runtime decisions visible to operators.
-- Make Panya and other clients depend on Turnstile as a separate service.
+## Source Of Truth
 
-## Non-Goals
+The source of truth for the public API and backend inventory is:
 
-- Multi-node orchestration.
-- Multi-GPU packing or placement.
-- Arbitrary user-supplied container execution.
-- Workflow DSLs or durable multi-step business processes.
-- Billing, tenancy, or quota systems.
-- Kubernetes integration.
+- `config/capabilities/*.yaml`
+- `config/services/*.yaml`
+- `config/requests/*.json`
+- `config/responses/*.json`
+- `GET /ops/capabilities`
 
-## Product Definition
+This RFC describes the design direction and current scope. The config files and live ops endpoints describe the exact shipped surface.
 
-Turnstile accepts requests at capability-specific endpoints such as image
-generation, image editing, and audio transcription. For each request, it:
-
-1. Validates and normalizes the public API payload.
-2. Resolves the request to a service adapter and service registry entry.
-3. Applies scheduling policy against current resource state.
-4. Routes the request to a warm backend, queues it, or starts a cold container.
-5. Persists job state and exposes progress, cancellation, and operator insight.
-
-## Primary Users
-
-- Local applications that need a stable media API without directly managing GPU
-  occupancy.
-- Operators running a single workstation or server with one scarce GPU.
-- Future platform clients such as Panya, which should consume Turnstile rather
-  than embed runtime brokerage logic.
-
-## Architecture
+## Implemented Architecture
 
 ### Components
 
-- FastAPI: public API, OpenAPI schema, Swagger UI, ReDoc, health endpoints.
-- Celery + Redis: background execution, queue routing, retry primitives, worker
-  lanes.
-- Postgres: durable records for jobs, services, policies, and runtime state.
-- Docker SDK for Python: container lifecycle control and GPU container startup.
-- Flower: Celery monitoring UI under an operator-only route.
+- FastAPI for the public API, OpenAPI generation, and health/ops endpoints
+- Celery for async execution on the `cpu` and `gpu` lanes
+- Redis for transient job state, queue state, and scarce-GPU arbitration state
+- Docker SDK / Docker API for warm container lifecycle, ephemeral jobs, cancellation, and archive copy
+- Flower for worker visibility
 
-### High-Level Flow
+### Execution Model
 
-1. Client calls a typed Turnstile endpoint.
-2. API creates a job record and resolves an adapter.
-3. Scheduler checks whether the request can run now, must wait, or requires
-   evicting the current warm GPU resident.
-4. Celery dispatches execution to the appropriate lane (`gpu`, `cpu`,
-   `warmup`, or `admin`).
-5. Runtime controller starts or reuses a container and captures artifacts and
-   status.
-6. API returns either a direct result or a `202 Accepted` response with a job
-   identifier.
+1. A client calls a typed capability endpoint such as `POST /v1/example/http/echo`, `POST /v1/example/http/gpu-echo`, or `POST /v1/example/command/run`.
+2. Turnstile validates the request against the capability schema loaded from YAML.
+3. Turnstile resolves a service from the service registry loaded from YAML.
+4. Readiness checks gate async submission so work is rejected fast when the target lane is not ready.
+5. Celery dispatches the job to the target lane.
+6. The runtime either reuses or starts a warm HTTP container, or launches a one-shot command container.
+7. Turnstile records transient job state and exposes runtime state through `/ops/runtime`, `/ops/services`, `/ops/jobs`, and `/ops/queues`.
 
-## Public API
+### Resource Policy
 
-Turnstile v1 should prefer capability-specific endpoints rather than a generic
-passthrough.
+The v1 policy is deliberately simple:
 
-### Endpoints
+- one `gpu` lane
+- one scarce GPU resident at a time for conflicting warm GPU services
+- warm GPU services may be evicted when another warm GPU service is requested
+- readiness must be green before async work is accepted
+- warm services expire after their configured idle TTL
 
-- `POST /v1/example/http/echo`
-- `POST /v1/example/command/run`
-- `GET /v1/jobs/{id}`
-- `POST /v1/jobs/{id}/cancel`
-- `GET /healthz`
-- `GET /readyz`
-- `GET /metrics`
-- `GET /docs`
-- `GET /redoc`
-- `GET /openapi.json`
-- `GET /ops/flower`
-- `GET /ops/jobs`
-- `GET /ops/services`
-- `GET /ops/containers`
+## Public API Shape
 
-### API Shape Principles
+Turnstile prefers capability-specific routes instead of a generic forwarding endpoint.
 
-- Each public endpoint has a typed request and response model.
-- Each endpoint maps to an internal adapter, not directly to an arbitrary
-  container URL.
-- Public responses normalize backend-specific errors into a stable contract.
-- Long-running work returns `202 Accepted` with a job resource.
-- Short-running work may complete synchronously when policy allows.
+Implemented route families:
 
-## Service Registry
+- config-driven capability routes under `/v1/...`
+- job status and cancellation routes under `/v1/jobs/...`
+- health and readiness routes
+- operator visibility routes under `/ops/...`
 
-Turnstile needs a registry describing each backend it can broker. YAML is
-acceptable for early development; Postgres-backed configuration is preferred for
-longer-term operation.
+All public capability routes are typed. Capabilities define the public contract. Services define implementations. Adapters decide how a capability is executed.
 
-### Minimum Schema
+## Runtime Contracts
 
-- `service_id`
-- `capability`
-- `image`
-- `mode` (`warm` or `ephemeral`)
-- `gpu_required`
-- `estimated_vram_mb`
-- `startup_timeout_s`
-- `idle_ttl_s`
-- `healthcheck`
-- `endpoint_adapter`
-- `cancel_strategy`
-- `eviction_priority`
+### Warm HTTP Services
 
-### Example
+Warm services are private backend containers started and managed by Turnstile. They are reused when healthy and when policy permits reuse.
 
-```yaml
-service_id: comfyui-editor
-capability: image.edit
-image: ghcr.io/example/comfyui-editor:latest
-mode: warm
-gpu_required: true
-estimated_vram_mb: 14336
-startup_timeout_s: 90
-idle_ttl_s: 600
-healthcheck:
-  type: http
-  path: /health
-endpoint_adapter: comfyui_edit
-cancel_strategy: docker_stop
-eviction_priority: 20
-```
+### Ephemeral Command Jobs
 
-## Execution Modes
+Ephemeral jobs exchange inputs and outputs through Docker archive copy APIs:
 
-### Warm Mode
+- Turnstile uploads `/turnstile/input/request.json`
+- the backend writes outputs under `/turnstile/output`
+- Turnstile downloads `/turnstile/output` after completion
 
-Warm mode keeps a backend container alive and private to Turnstile. Turnstile
-proxies requests to it when the service is healthy and policy permits reuse.
+Artifact paths recorded in job results are diagnostic server-local extracted paths. They are not durable storage handles.
 
-Use warm mode for:
+## Implemented Examples
 
-- expensive model load times
-- repetitive bursts of small requests
-- APIs where load time dominates request time
+The repo currently ships generic examples that demonstrate the architecture without hardcoded capability routes:
 
-### Ephemeral Mode
+- `example.http.echo`
+- `example.http.gpu-echo`
+- `example.command.run`
 
-Ephemeral mode starts a container for a single job, waits for completion,
-collects outputs, and removes the container.
+The example warm HTTP services show the intended scaling model:
 
-Use ephemeral mode for:
+- one reusable image
+- multiple service YAMLs
+- different `service_id` values and env
 
-- spiky or memory-volatile jobs
-- batch transforms
-- tools with little benefit from staying warm
+That pattern is used for both non-GPU warm reuse and scarce-GPU warm eviction.
 
-## Resource Arbiter
+## Implemented Vs Future
 
-The arbiter is the core differentiator. For v1, policy should stay simple and
-deterministic.
+Implemented now:
 
-### v1 Policy
+- YAML-defined capabilities and services
+- typed OpenAPI surface generated from those definitions
+- Redis-backed transient job and warm-service state
+- Celery lane routing for `cpu` and `gpu`
+- warm HTTP reuse
+- warm GPU eviction for conflicting residents
+- ephemeral command execution with artifact extraction
+- cancellation for warm HTTP and ephemeral jobs
+- `/ops/readiness`, `/ops/runtime`, `/ops/services`, `/ops/jobs`, and `/ops/queues`
 
-- One GPU execution lane.
-- One GPU worker process with concurrency `1`.
-- At most one warm GPU service resident at a time.
-- FIFO scheduling by default.
-- Optional operator-triggered priority lane later, not in the first cut.
-- Idle warm GPU services auto-stop after a configured TTL.
+Explicitly deferred:
 
-### Primary Decisions
+- durable artifact storage
+- durable historical job database
+- Postgres-backed persistence
+- multi-node scheduling
+- multi-GPU placement and packing
+- Kubernetes integration
+- generic passthrough proxying
 
-For each incoming job, the arbiter answers:
+## Notes
 
-- Is the required backend already warm and healthy?
-- Is the GPU lane currently busy?
-- Can the current resident satisfy this request directly?
-- Should the current warm resident be retained, evicted, or rejected?
-- Is this job allowed to wait, or should admission fail fast?
-
-### Service Lifecycle
-
-```text
-stopped -> starting -> warm -> busy -> idle -> evicting -> stopped
-```
-
-## Job Model
-
-Every request becomes a job record, even when the client experiences the API as
-synchronous.
-
-### Job States
-
-- `queued`
-- `waiting_for_gpu`
-- `starting_backend`
-- `running`
-- `streaming`
-- `succeeded`
-- `failed`
-- `cancelled`
-- `timed_out`
-
-### Required Job Fields
-
-- `job_id`
-- `capability`
-- `requested_service_id`
-- `selected_service_id`
-- `status`
-- `request_payload`
-- `result_payload`
-- `error_code`
-- `error_detail`
-- `container_id`
-- `created_at`
-- `started_at`
-- `finished_at`
-
-## Cancellation
-
-Cancellation must target the runtime unit actually consuming resources.
-
-### v1 Rule
-
-- Turnstile stores the active `container_id` for any running container-backed
-  job.
-- `POST /v1/jobs/{id}/cancel` resolves the container and calls Docker stop.
-- Worker logic treats container termination as a cancellation outcome and
-  persists the terminal state.
-
-Celery revoke may still be useful for queued work, but it should not be the
-primary kill mechanism for live GPU jobs.
-
-## Deployment Shape
-
-### Logical Topology
-
-```text
-Client
-  -> Turnstile API (FastAPI)
-       -> Postgres
-       -> Redis
-       -> Celery workers
-       -> Docker daemon
-       -> Flower (operator-only)
-```
-
-### Suggested Lanes
-
-- `gpu`: GPU-bound execution, concurrency `1`
-- `cpu`: CPU-only jobs
-- `warmup`: service startup and preloading
-- `admin`: cleanup, eviction, and control tasks
-
-## Operator Surface
-
-Turnstile should expose one address with both developer docs and operator views.
-
-### v1 Operator Routes
-
-- `/docs`
-- `/redoc`
-- `/openapi.json`
-- `/ops/flower`
-- `/ops/jobs`
-- `/ops/services`
-- `/ops/containers`
-- `/metrics`
-- `/healthz`
-
-## Risks
-
-- Container startup variance may make synchronous behavior unpredictable.
-- GPU memory estimation will be heuristic at first and may require conservative
-  policy.
-- Cancellation correctness depends on reliably tracking container identity and
-  terminal state transitions.
-- Redis and Celery are sufficient for v1, but not a substitute for a workflow
-  engine if product scope expands into durable orchestration.
-
-## v1 Exclusions
-
-The following are intentionally excluded from the first version:
-
-- multi-host scheduling
-- multi-GPU placement
-- generic reverse proxying to arbitrary containers
-- user-defined pipelines
-- tenancy and billing
-- Kubernetes deployment abstractions
-
-## Open Questions
-
-- Which exact capabilities should ship first beyond image generation, image
-  editing, and audio transcription?
-- Should job artifact storage start as local disk, object storage, or
-  database-backed metadata plus filesystem blobs?
-- How much operator control should `/ops/services` expose in v1: read-only
-  visibility, or manual warm/evict actions?
-
-## Decision
-
-Proceed with Turnstile as a separate application. Panya and other clients should
-integrate with Turnstile over its public API rather than embedding resource
-arbitration logic directly.
+If the repo docs and this RFC drift, prefer the implementation-facing docs plus the config files and `/ops/capabilities`. This RFC should stay short and aligned with the live system rather than describe future architecture as if it already exists.

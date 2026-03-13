@@ -49,6 +49,7 @@ Ephemeral `container_command` services do not rely on host bind mounts for reque
 - before start, Turnstile uploads `/turnstile/input/request.json` into the child container with Docker archive copy APIs
 - the child container writes any outputs under `/turnstile/output`
 - after completion, Turnstile downloads `/turnstile/output` back out and records artifacts from the extracted files
+- artifact `path` values exposed in job results are diagnostic server-local paths from that extracted output, not durable storage handles
 
 This design works when Turnstile itself is running in a container and talking to a host Docker daemon through the mounted Docker socket. Bind-mounted temp paths created inside the worker container are no longer part of the contract.
 

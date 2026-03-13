@@ -57,6 +57,7 @@ Static routes:
 YAML-defined example capability routes shipped in this repo:
 
 - `POST /v1/example/http/echo`
+- `POST /v1/example/http/gpu-echo`
 - `POST /v1/example/command/run`
 
 OpenAPI reflects both the static routes and all loaded capability routes at `GET /openapi.json`.
@@ -66,7 +67,7 @@ OpenAPI reflects both the static routes and all loaded capability routes at `GET
 - `async` capabilities enqueue a Celery job and return `202 Accepted` with a job record.
 - `sync` capabilities run inline and return the final normalized response directly.
 - By default, async submissions fail fast with `503 queue_unavailable` unless the target lane is submission-ready.
-- The shipped example capabilities are both `async`; `sync` support exists for future config-defined capabilities.
+- The shipped example capabilities are all `async`; `sync` support exists for future config-defined capabilities.
 
 ## Single-Server Deployment
 
@@ -132,6 +133,7 @@ Ephemeral command services:
 - Turnstile injects `TURNSTILE_JOB_ID`, `TURNSTILE_REQUEST_JSON`, `TURNSTILE_REQUEST_FILE`, and `TURNSTILE_OUTPUT_DIR`.
 - Turnstile uploads `/turnstile/input/request.json` into the ephemeral container before start.
 - After completion, Turnstile downloads `/turnstile/output` back out of the container and records artifacts from that extracted output.
+- Artifact `path` fields in job results point at server-local extracted files for diagnostics. They are not a durable storage contract.
 
 More deployment notes live in [docs/deployment.md](docs/deployment.md).
 The canonical Docker smoke test lives in [docs/smoke-test.md](docs/smoke-test.md).
@@ -143,7 +145,7 @@ Turnstile now ships two reusable example backend images inside this repo:
 
 - `turnstile/mock-http-tool:latest`
   - source: `examples/backends/mock_http_tool/`
-  - used by `mock-http-alpha` and `mock-http-beta`
+  - used by `mock-http-alpha`, `mock-http-beta`, `mock-gpu-http-alpha`, and `mock-gpu-http-beta`
 - `turnstile/mock-command-tool:latest`
   - source: `examples/backends/mock_command_tool/`
   - used by `mock-command-alpha` and `mock-command-beta`
@@ -161,12 +163,15 @@ These are normal backend services. They are not special-cased in FastAPI or the 
 Generic capability definitions:
 
 - `config/capabilities/example_http_echo.yaml`
+- `config/capabilities/example_http_gpu_echo.yaml`
 - `config/capabilities/example_command_run.yaml`
 
 Generic service definitions:
 
 - `config/services/mock_http_alpha.yaml`
 - `config/services/mock_http_beta.yaml`
+- `config/services/mock_gpu_http_alpha.yaml`
+- `config/services/mock_gpu_http_beta.yaml`
 - `config/services/mock_command_alpha.yaml`
 - `config/services/mock_command_beta.yaml`
 
@@ -192,6 +197,8 @@ adapter_config:
 
 That is the intended scaling model. To add another instance, copy a service YAML, keep the same image, and change only `service_id` and env.
 
+The same pattern is the canonical way to model multiple warm GPU services from one image. `mock-gpu-http-alpha` and `mock-gpu-http-beta` both use `turnstile/mock-http-tool:latest`, set `gpu_required: true`, and differ only by service metadata plus `adapter_config.env`.
+
 ## Adding a Capability
 
 1. Add a request schema in `config/requests/`.
@@ -203,7 +210,32 @@ That is the intended scaling model. To add another instance, copy a service YAML
 Shipped capability examples:
 
 - `config/capabilities/example_http_echo.yaml`
+- `config/capabilities/example_http_gpu_echo.yaml`
 - `config/capabilities/example_command_run.yaml`
+
+## Integration Testing
+
+The smoke test remains the clean-checkout operator path. The repeatable API assertions live in the opt-in integration pytest suite.
+
+The default fast test target stays local and stub-backed:
+
+```bash
+make test
+```
+
+Run the full Docker-backed integration suite:
+
+```bash
+make test-integration
+```
+
+Run only the scarce-GPU warm eviction scenario:
+
+```bash
+make test-gpu-eviction
+```
+
+The harness builds the example backend images, starts `docker compose`, waits for `/ops/runtime` readiness, then runs `pytest -m integration` against the live stack. The GPU eviction test requires Docker GPU support; on hosts without a usable GPU runtime it skips cleanly.
 
 Warm HTTP capability/service example:
 
@@ -290,6 +322,7 @@ Use [docs/smoke-test.md](docs/smoke-test.md) for the exact Docker smoke-test seq
 
 - `GET /readyz`
 - `POST /v1/example/http/echo`
+- `POST /v1/example/http/gpu-echo`
 - `POST /v1/example/command/run`
 - `GET /v1/jobs/{job_id}`
 - `/healthz`

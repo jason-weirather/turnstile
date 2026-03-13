@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "turnstile"
-version = "0.1.0"
+version = "0.1.1"
 description = "Resource-aware API broker for scarce local compute"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -43,6 +43,12 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 plugins = []
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: exercises the live Docker-backed Turnstile stack",
+  "gpu_eviction: covers warm GPU reuse and eviction handoff",
+]
 
 [[tool.mypy.overrides]]
 module = ["celery.*", "docker.*", "fakeredis.*"]

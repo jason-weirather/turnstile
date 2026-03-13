@@ -43,11 +43,14 @@ def test_repo_config_examples_load_and_validate() -> None:
 
     assert {capability.capability_id for capability in capabilities} >= {
         "example.http.echo",
+        "example.http.gpu-echo",
         "example.command.run",
     }
     assert {service.service_id for service in services} >= {
         "mock-http-alpha",
         "mock-http-beta",
+        "mock-gpu-http-alpha",
+        "mock-gpu-http-beta",
         "mock-command-alpha",
         "mock-command-beta",
     }
@@ -67,12 +70,19 @@ def test_generic_example_services_reuse_shared_backend_images() -> None:
     services = {service.service_id: service for service in loader.load_services()}
 
     assert capabilities["example.http.echo"].path == "/example/http/echo"
+    assert capabilities["example.http.gpu-echo"].path == "/example/http/gpu-echo"
     assert capabilities["example.command.run"].path == "/example/command/run"
 
     assert services["mock-http-alpha"].image == "turnstile/mock-http-tool:latest"
     assert services["mock-http-beta"].image == "turnstile/mock-http-tool:latest"
     assert services["mock-http-alpha"].capabilities == ["example.http.echo"]
     assert services["mock-http-beta"].capabilities == ["example.http.echo"]
+    assert services["mock-gpu-http-alpha"].image == "turnstile/mock-http-tool:latest"
+    assert services["mock-gpu-http-beta"].image == "turnstile/mock-http-tool:latest"
+    assert services["mock-gpu-http-alpha"].capabilities == ["example.http.gpu-echo"]
+    assert services["mock-gpu-http-beta"].capabilities == ["example.http.gpu-echo"]
+    assert services["mock-gpu-http-alpha"].gpu_required is True
+    assert services["mock-gpu-http-beta"].gpu_required is True
 
     assert services["mock-command-alpha"].image == "turnstile/mock-command-tool:latest"
     assert services["mock-command-beta"].image == "turnstile/mock-command-tool:latest"

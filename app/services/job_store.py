@@ -22,6 +22,7 @@ class RedisJobStore:
     GPU_ACTIVE_SERVICE_KEY = "turnstile:gpu:active_service"
     GPU_LOCK_KEY = "turnstile:gpu:lock"
     WARM_SERVICE_KEY_PREFIX = "turnstile:warm_services:"
+    TERMINAL_STATUSES = {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
 
     def __init__(self, client: redis.Redis) -> None:
         self._client = client
@@ -85,34 +86,57 @@ class RedisJobStore:
         error_detail: str | None = None,
         container_id: str | None = None,
     ) -> JobRecord | None:
-        job = self.get(job_id)
-        if job is None:
-            return None
+        job_key = self._job_key(job_id)
+        for _ in range(5):
+            with self._client.pipeline() as pipeline:
+                try:
+                    pipeline.watch(job_key)
+                    payload = pipeline.get(job_key)
+                    if payload is None:
+                        pipeline.unwatch()
+                        return None
 
-        started_at = job.started_at
-        finished_at = job.finished_at
-        if status == JobStatus.RUNNING and started_at is None:
-            started_at = datetime.now(timezone.utc)
-        if status in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}:
-            finished_at = datetime.now(timezone.utc)
+                    job = JobRecord.model_validate_json(cast(str, payload))
+                    if job.status in self.TERMINAL_STATUSES and status != job.status:
+                        pipeline.unwatch()
+                        return job
 
-        updated = job.model_copy(
-            update={
-                "status": status,
-                "result_payload": (
-                    result_payload if result_payload is not None else job.result_payload
-                ),
-                "error_code": error_code if error_code is not None else job.error_code,
-                "error_detail": error_detail if error_detail is not None else job.error_detail,
-                "container_id": container_id if container_id is not None else job.container_id,
-                "started_at": started_at,
-                "finished_at": finished_at,
-            }
-        )
-        self._client.set(self._job_key(job_id), updated.model_dump_json(), ex=self._job_ttl_s)
-        self._client.zadd(self.JOB_INDEX_KEY, {job_id: updated.created_at.timestamp()})
-        self._client.expire(self.JOB_INDEX_KEY, self._job_ttl_s)
-        return updated
+                    started_at = job.started_at
+                    finished_at = job.finished_at
+                    if status == JobStatus.RUNNING and started_at is None:
+                        started_at = datetime.now(timezone.utc)
+                    if status in self.TERMINAL_STATUSES:
+                        finished_at = datetime.now(timezone.utc)
+
+                    updated = job.model_copy(
+                        update={
+                            "status": status,
+                            "result_payload": (
+                                result_payload if result_payload is not None else job.result_payload
+                            ),
+                            "error_code": (
+                                error_code if error_code is not None else job.error_code
+                            ),
+                            "error_detail": (
+                                error_detail if error_detail is not None else job.error_detail
+                            ),
+                            "container_id": (
+                                container_id if container_id is not None else job.container_id
+                            ),
+                            "started_at": started_at,
+                            "finished_at": finished_at,
+                        }
+                    )
+                    pipeline.multi()
+                    pipeline.set(job_key, updated.model_dump_json(), ex=self._job_ttl_s)
+                    pipeline.zadd(self.JOB_INDEX_KEY, {job_id: updated.created_at.timestamp()})
+                    pipeline.expire(self.JOB_INDEX_KEY, self._job_ttl_s)
+                    pipeline.execute()
+                    return updated
+                except redis.WatchError:
+                    continue
+
+        raise RuntimeError(f"Failed to update job state for '{job_id}' after concurrent writes.")
 
     def attach_container(self, job_id: str, container_id: str) -> JobRecord | None:
         job = self.get(job_id)

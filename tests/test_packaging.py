@@ -51,12 +51,15 @@ def test_example_backend_assets_and_make_targets_exist() -> None:
     assert (root / "docker-compose.examples.yml").exists()
     assert (root / "docs" / "smoke-test.md").exists()
     assert (root / "docs" / "testing-backends.md").exists()
+    assert (root / "scripts" / "run_integration_tests.sh").exists()
     assert (root / "scripts" / "smoke_test.sh").exists()
 
     for target in (
         "build-example-backends:",
         "build-mock-http-tool:",
         "build-mock-command-tool:",
+        "test-integration:",
+        "test-gpu-eviction:",
         "run-mock-http-alpha:",
         "run-mock-http-beta:",
         "smoke-docker:",
@@ -74,6 +77,12 @@ def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() ->
 
     http_alpha = yaml.safe_load((services_dir / "mock_http_alpha.yaml").read_text(encoding="utf-8"))
     http_beta = yaml.safe_load((services_dir / "mock_http_beta.yaml").read_text(encoding="utf-8"))
+    gpu_http_alpha = yaml.safe_load(
+        (services_dir / "mock_gpu_http_alpha.yaml").read_text(encoding="utf-8")
+    )
+    gpu_http_beta = yaml.safe_load(
+        (services_dir / "mock_gpu_http_beta.yaml").read_text(encoding="utf-8")
+    )
     command_alpha = yaml.safe_load(
         (services_dir / "mock_command_alpha.yaml").read_text(encoding="utf-8")
     )
@@ -83,6 +92,10 @@ def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() ->
 
     assert http_alpha["image"] == "turnstile/mock-http-tool:latest"
     assert http_beta["image"] == "turnstile/mock-http-tool:latest"
+    assert gpu_http_alpha["image"] == "turnstile/mock-http-tool:latest"
+    assert gpu_http_beta["image"] == "turnstile/mock-http-tool:latest"
+    assert gpu_http_alpha["gpu_required"] is True
+    assert gpu_http_beta["gpu_required"] is True
     assert command_alpha["image"] == "turnstile/mock-command-tool:latest"
     assert command_beta["image"] == "turnstile/mock-command-tool:latest"
 
@@ -90,8 +103,10 @@ def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() ->
         "turnstile/mock-http-tool:latest",
         "turnstile/mock-command-tool:latest",
         "build-example-backends",
+        "pytest -m integration",
         "smoke-docker",
         "/v1/example/http/echo",
+        "/v1/example/http/gpu-echo",
         "/v1/example/command/run",
         "service_id",
     ):
@@ -102,13 +117,17 @@ def test_example_backend_image_tags_are_consistent_in_docs_and_service_yaml() ->
 
 def test_smoke_script_has_valid_shell_syntax() -> None:
     root = Path(__file__).resolve().parents[1]
-    script_path = root / "scripts" / "smoke_test.sh"
+    script_paths = [
+        root / "scripts" / "smoke_test.sh",
+        root / "scripts" / "run_integration_tests.sh",
+    ]
 
-    result = subprocess.run(
-        ["bash", "-n", str(script_path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    for script_path in script_paths:
+        result = subprocess.run(
+            ["bash", "-n", str(script_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
-    assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, result.stderr

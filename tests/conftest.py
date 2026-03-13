@@ -12,8 +12,19 @@ from app.services import readiness as readiness_module
 from app.services import runtime as runtime_module
 
 
+def _is_integration_test(request: pytest.FixtureRequest) -> bool:
+    return request.node.get_closest_marker("integration") is not None
+
+
 @pytest.fixture(autouse=True)
-def fake_redis(monkeypatch: pytest.MonkeyPatch) -> Generator[fakeredis.FakeRedis, None, None]:
+def fake_redis(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> Generator[fakeredis.FakeRedis | None, None, None]:
+    if _is_integration_test(request):
+        yield None
+        return
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -45,7 +56,14 @@ def fake_redis(monkeypatch: pytest.MonkeyPatch) -> Generator[fakeredis.FakeRedis
 
 
 @pytest.fixture(autouse=True)
-def healthy_worker_inspect(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+def healthy_worker_inspect(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
+    if _is_integration_test(request):
+        yield
+        return
+
     class FakeInspect:
         def ping(self) -> dict[str, dict[str, str]]:
             return {
@@ -69,7 +87,11 @@ def healthy_worker_inspect(monkeypatch: pytest.MonkeyPatch) -> Generator[None, N
 
 
 @pytest.fixture(autouse=True)
-def eager_celery() -> Generator[None, None, None]:
+def eager_celery(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    if _is_integration_test(request):
+        yield
+        return
+
     from app.tasks import execute_capability_task
 
     execute_capability_task.app.conf.task_always_eager = True

@@ -40,6 +40,7 @@ def test_openapi_includes_capability_routes() -> None:
     assert response.status_code == 200
     paths = response.json()["paths"]
     assert "/v1/example/http/echo" in paths
+    assert "/v1/example/http/gpu-echo" in paths
     assert "/v1/example/command/run" in paths
     assert "/readyz" in paths
 
@@ -124,6 +125,27 @@ def test_submit_example_http_job_with_service_override() -> None:
     assert body["result_payload"]["echo"]["text"] == "hello beta"
 
 
+def test_submit_example_gpu_http_job_and_lookup_result() -> None:
+    client = TestClient(app)
+
+    submit_response = client.post(
+        "/v1/example/http/gpu-echo",
+        json={"text": "hello gpu default"},
+    )
+
+    assert submit_response.status_code == 202
+    job_id = submit_response.json()["job_id"]
+
+    job_response = client.get(f"/v1/jobs/{job_id}")
+    assert job_response.status_code == 200
+    body = job_response.json()
+    assert body["status"] == "succeeded"
+    assert body["capability"] == "example.http.gpu-echo"
+    assert body["selected_service_id"] == "mock-gpu-http-alpha"
+    assert body["result_payload"]["service_id"] == "mock-gpu-http-alpha"
+    assert body["result_payload"]["echo"]["text"] == "hello gpu default"
+
+
 def test_submit_example_command_job_with_service_override() -> None:
     client = TestClient(app)
 
@@ -201,9 +223,10 @@ def test_ops_and_health_endpoints_expose_runtime_visibility() -> None:
     assert gpu_lane["reason"] is None
     assert "identity" in runtime_response.json()
     assert "worker_inspection" in readiness_ops_response.json()
-    assert len(services_response.json()["services"]) >= 4
+    assert len(services_response.json()["services"]) >= 6
     assert {item["capability_id"] for item in capabilities_response.json()} >= {
         "example.http.echo",
+        "example.http.gpu-echo",
         "example.command.run",
     }
 

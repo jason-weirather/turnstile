@@ -1,6 +1,7 @@
 .PHONY: dev worker worker-gpu worker-cpu flower test lint format typecheck \
 	build-example-backends build-mock-http-tool build-mock-command-tool \
-	run-mock-http-alpha run-mock-http-beta smoke-docker smoke-docker-keepalive
+	run-mock-http-alpha run-mock-http-beta test-integration test-gpu-eviction \
+	smoke-docker smoke-docker-keepalive
 
 dev:
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -18,7 +19,13 @@ flower:
 	celery -A worker:celery_app flower --port=5555
 
 test:
-	pytest
+	pytest -m "not integration"
+
+test-integration:
+	bash scripts/run_integration_tests.sh
+
+test-gpu-eviction:
+	bash scripts/run_integration_tests.sh --gpu-eviction-only
 
 lint:
 	ruff check .

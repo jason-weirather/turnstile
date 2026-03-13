@@ -146,6 +146,30 @@ def test_cancel_queued_jobs_for_lane_via_ops_endpoint() -> None:
     assert job_response.json()["status"] == "cancelled"
 
 
+def test_terminal_cancelled_status_is_not_overwritten_by_waiting_update() -> None:
+    store = job_store_module.get_job_store()
+    service = get_service_registry().resolve_for_capability("example.http.echo")
+    store.enqueue(
+        JobRecord(
+            job_id="job-race",
+            capability="example.http.echo",
+            queue_lane=QueueLane.GPU,
+            requested_service_id=service.service_id,
+            selected_service_id=service.service_id,
+            request_payload={"text": "race"},
+        )
+    )
+
+    cancelled = store.cancel("job-race")
+    assert cancelled is not None
+    assert cancelled.status == JobStatus.CANCELLED
+
+    later = store.set_status("job-race", JobStatus.WAITING_FOR_GPU, error_detail=None)
+    assert later is not None
+    assert later.status == JobStatus.CANCELLED
+    assert later.error_code == "cancelled"
+
+
 def test_failed_example_command_job_sets_failed_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

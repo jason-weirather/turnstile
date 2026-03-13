@@ -1,0 +1,15 @@
+capability_id: example.http.gpu-echo
+method: POST
+path: /example/http/gpu-echo
+summary: Echo a request through a warm GPU HTTP example backend
+request_schema: requests/example_http_echo.request.json
+response_schema: responses/job_accepted.response.json
+execution_mode: async
+queue_lane: gpu
+adapter_type: http_forward_json
+default_service_selection: mock-gpu-http-alpha
+docs_examples:
+  - text: hello from gpu alpha
+    service_id: mock-gpu-http-alpha
+  - text: hello from gpu beta
+    service_id: mock-gpu-http-beta

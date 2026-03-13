@@ -46,7 +46,7 @@ Expected checkpoints:
 - `/healthz` reports liveness and dependency reachability.
 - `/readyz` returns success before you submit any async job.
 - `/ops/readiness` shows `submission_ready: true` for both `cpu` and `gpu`.
-- `/ops/capabilities` includes `example.http.echo` and `example.command.run`.
+- `/ops/capabilities` includes `example.http.echo`, `example.http.gpu-echo`, and `example.command.run`.
 - `/ops/services` lists the shipped mock services from `config/services/`.
 - `/ops/runtime` shows `docker_reachable: true` and `submission_ready: true` for both `cpu` and `gpu`.
 - `/ops/queues` includes both `cpu` and `gpu`.
@@ -170,6 +170,8 @@ Expected success shape:
 }
 ```
 
+The artifact `path` values above are server-local extracted paths for diagnostics. They are not a durable artifact-storage contract.
+
 7. Optionally inspect Flower:
 
 ```bash
@@ -199,6 +201,47 @@ Keep the stack running after the smoke test finishes:
 ```bash
 make smoke-docker-keepalive
 ```
+
+## GPU Warm Eviction Test
+
+Use the new GPU warm example capability to verify reuse and eviction on the scarce GPU lane:
+
+```bash
+GPU_ALPHA_JOB_ID="$(
+  curl -fsS -X POST http://localhost:8000/v1/example/http/gpu-echo \
+    -H 'Content-Type: application/json' \
+    -d '{"text":"hello gpu alpha","service_id":"mock-gpu-http-alpha"}' |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])'
+)"
+
+GPU_BETA_JOB_ID="$(
+  curl -fsS -X POST http://localhost:8000/v1/example/http/gpu-echo \
+    -H 'Content-Type: application/json' \
+    -d '{"text":"hello gpu beta","service_id":"mock-gpu-http-beta"}' |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])'
+)"
+```
+
+After polling both jobs to completion, inspect:
+
+```bash
+curl -fsS http://localhost:8000/ops/services | python3 -m json.tool
+curl -fsS http://localhost:8000/ops/runtime | python3 -m json.tool
+docker ps --filter label=turnstile.managed=true
+```
+
+What to look for:
+
+- requesting `mock-gpu-http-alpha` twice reuses the same warm GPU container
+- requesting `mock-gpu-http-beta` after alpha causes the active GPU warm resident to switch to beta
+- `/ops/runtime` shows only one `gpu_required` warm resident at a time in the conflicting case
+- `/ops/services` shows `warm_state` moving from `mock-gpu-http-alpha` to `mock-gpu-http-beta`
+
+For the automated version of the same path, run `make test-gpu-eviction`.
+
+The broader live-stack integration suite runs through `pytest -m integration` via `make test-integration`.
+
+If Docker on the current host cannot start GPU containers, the automated GPU eviction test skips instead of failing the rest of the integration suite.
 
 The script lives at `scripts/smoke_test.sh`. It fails fast, exits nonzero on any error, and verifies both the warm HTTP route and the ephemeral command-backed route through `GET /v1/jobs/{job_id}`.
 
