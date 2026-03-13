@@ -19,7 +19,7 @@ flower:
 	celery -A worker:celery_app flower --port=5555
 
 test:
-	pytest -m "not integration"
+	python -m pytest -m "not integration"
 
 test-integration:
 	bash scripts/run_integration_tests.sh

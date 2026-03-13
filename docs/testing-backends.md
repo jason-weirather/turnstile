@@ -129,6 +129,15 @@ The default fast suite remains the local stub-heavy path:
 make test
 ```
 
+That target uses `python -m pytest`, so it runs against the currently active Python environment. A local virtualenv is the default supported workflow:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev]'
+```
+
 Run the full suite:
 
 ```bash
@@ -146,7 +155,9 @@ The harness:
 - builds the example backend images
 - starts `docker compose`
 - waits for `/ops/runtime` readiness
-- runs `pytest -m integration`
+- runs `python -m pytest -m integration`
+
+If you need to override the interpreter used by the integration harness, set `TURNSTILE_TEST_PYTHON` or `PYTHON` before running `make test-integration`.
 
 The GPU eviction test requires Docker GPU support. On hosts without a usable GPU runtime, that specific test skips and the rest of the integration suite still runs.
 

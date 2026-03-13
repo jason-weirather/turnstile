@@ -14,8 +14,10 @@
 
 ## Local Commands
 
-- `conda activate turnstile_env`
-- `pip install -e '.[dev]'`
+- `python3 -m venv .venv`
+- `. .venv/bin/activate`
+- `python -m pip install -U pip`
+- `python -m pip install -e '.[dev]'`
 - `make dev`
 - `make worker`
 - `make worker-gpu`
@@ -43,7 +45,7 @@
 - README documents exact startup commands and expected endpoints.
 
 ## Environment
-- Use the local mamba environment `turnstile_env`
+- Use the current shell's Python environment or a local `.venv`
 - Never install Python packages globally
 - Python setup for worktrees is handled by the Local Environment setup script
 - Run tests before finishing

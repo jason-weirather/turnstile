@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 API_BASE_URL="${TURNSTILE_INTEGRATION_API_URL:-http://127.0.0.1:8000}"
 STARTUP_TIMEOUT_S="${TURNSTILE_INTEGRATION_STARTUP_TIMEOUT_S:-120}"
 POLL_INTERVAL_S="${TURNSTILE_INTEGRATION_POLL_INTERVAL_S:-2}"
+TEST_PYTHON="${TURNSTILE_TEST_PYTHON:-${PYTHON:-python}}"
 KEEP_RUNNING=0
 REBUILD_IMAGES=0
 GPU_EVICTION_ONLY=0
@@ -63,6 +64,10 @@ compose() {
   docker compose "$@"
 }
 
+python_cmd() {
+  "$TEST_PYTHON" "$@"
+}
+
 ensure_env_file() {
   if [[ -f .env ]]; then
     return 0
@@ -83,7 +88,7 @@ ensure_image() {
 }
 
 runtime_ready() {
-  python3 - <<'PY'
+  python_cmd - <<'PY'
 import json
 import os
 import sys
@@ -109,6 +114,16 @@ ok = (
 )
 raise SystemExit(0 if ok else 1)
 PY
+}
+
+ensure_python_env() {
+  if ! python_cmd -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
+    fail "Python interpreter '$TEST_PYTHON' is not executable. Set TURNSTILE_TEST_PYTHON or PYTHON to the interpreter you want to use."
+  fi
+
+  if ! python_cmd -c 'import pytest' >/dev/null 2>&1; then
+    fail "pytest is not installed in '$TEST_PYTHON'. Bootstrap a local env with: python3 -m venv .venv && . .venv/bin/activate && python -m pip install -U pip && python -m pip install -e \".[dev]\""
+  fi
 }
 
 wait_for_runtime() {
@@ -153,13 +168,14 @@ run_pytest() {
   fi
 
   log "Running ${pytest_args[*]}"
-  conda run -n turnstile_env pytest "${pytest_args[@]}"
+  python_cmd -m pytest "${pytest_args[@]}"
 }
 
 main() {
   parse_args "$@"
   trap cleanup EXIT
 
+  ensure_python_env
   ensure_env_file
   ensure_image "turnstile/mock-http-tool:latest" "examples/backends/mock_http_tool"
   ensure_image "turnstile/mock-command-tool:latest" "examples/backends/mock_command_tool"

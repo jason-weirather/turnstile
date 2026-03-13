@@ -105,8 +105,10 @@ For the exact first-run smoke sequence, use [docs/smoke-test.md](docs/smoke-test
 ## Manual Run
 
 ```bash
-conda activate turnstile_env
-pip install -e '.[dev]'
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev]'
 cp .env.example .env
 make build-example-backends
 make dev
@@ -120,6 +122,35 @@ If you want one combined worker locally:
 ```bash
 make worker
 ```
+
+## Local Dev Bootstrap
+
+For local development and the fast test suite, use any Python environment that has the dev extras installed. A plain virtualenv is the default supported path:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev]'
+```
+
+`make test` now runs through `python -m pytest`, so it uses the active shell environment instead of assuming a Conda or Mamba env name.
+
+## Ubuntu/Linux Quick Start
+
+The canonical operator verification path is still [`make smoke-docker`](docs/smoke-test.md). For local development and integration checks on Ubuntu or other Linux hosts:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev]'
+cp .env.example .env
+make test
+make test-integration
+```
+
+To force the integration harness to use a specific interpreter, set `TURNSTILE_TEST_PYTHON` or `PYTHON` before `make test-integration`.
 
 ## Docker Behavior
 

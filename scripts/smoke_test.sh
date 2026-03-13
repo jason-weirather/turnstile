@@ -86,9 +86,14 @@ api_get() {
   local path="$1"
   compose exec -T api python -c '
 import sys
+import urllib.error
 import urllib.request
 
-print(urllib.request.urlopen(sys.argv[1]).read().decode())
+try:
+    with urllib.request.urlopen(sys.argv[1]) as response:
+        print(response.read().decode())
+except (urllib.error.URLError, TimeoutError, OSError):
+    raise SystemExit(1)
 ' "$API_BASE_URL$path"
 }
 
@@ -97,6 +102,7 @@ api_post() {
   local payload="$2"
   compose exec -T api python -c '
 import sys
+import urllib.error
 import urllib.request
 
 body = sys.argv[2].encode("utf-8")
@@ -106,7 +112,11 @@ request = urllib.request.Request(
     headers={"Content-Type": "application/json"},
     method="POST",
 )
-print(urllib.request.urlopen(request).read().decode())
+try:
+    with urllib.request.urlopen(request) as response:
+        print(response.read().decode())
+except (urllib.error.URLError, TimeoutError, OSError):
+    raise SystemExit(1)
 ' "$API_BASE_URL$path" "$payload"
 }
 
@@ -114,6 +124,23 @@ show_json_endpoint() {
   local path="$1"
   log "GET $path"
   api_get "$path" | json_pretty
+}
+
+flower_status() {
+  compose exec -T api python -c '
+import sys
+import urllib.error
+import urllib.request
+
+try:
+    with urllib.request.urlopen(sys.argv[1]) as response:
+        print(response.status)
+except urllib.error.HTTPError as exc:
+    print(exc.code)
+    raise SystemExit(0 if exc.code == 401 else 1)
+except (urllib.error.URLError, TimeoutError, OSError):
+    raise SystemExit(1)
+' "$FLOWER_URL/api/workers"
 }
 
 ensure_env_file() {
@@ -363,13 +390,19 @@ main() {
   log "Verified ephemeral command example job"
 
   log "Optional Flower check"
-  if compose exec -T api python -c '
+  local flower_http_status
+  if flower_http_status="$(flower_status)"; then
+    if [[ "$flower_http_status" == "401" ]]; then
+      log "Flower is reachable at $FLOWER_URL but requires authentication"
+    else
+      compose exec -T api python -c '
 import sys
 import urllib.request
 
 print(urllib.request.urlopen(sys.argv[1]).read().decode())
-' "$FLOWER_URL/api/workers" | json_pretty; then
-    log "Flower responded at $FLOWER_URL"
+' "$FLOWER_URL/api/workers" | json_pretty
+      log "Flower responded at $FLOWER_URL"
+    fi
   else
     log "Flower check skipped or unavailable at $FLOWER_URL"
   fi
