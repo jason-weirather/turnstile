@@ -206,6 +206,7 @@ class DockerRuntimeController(RuntimeController):
             }
             if self._settings.docker_network:
                 create_kwargs["network"] = self._settings.docker_network
+            create_kwargs.update(self._optional_docker_kwargs(service))
 
             container = self._create_container(service.image, **create_kwargs)
             self._seed_container_workspace(container, payload)
@@ -269,6 +270,7 @@ class DockerRuntimeController(RuntimeController):
             run_kwargs["network"] = self._settings.docker_network
         else:
             run_kwargs["ports"] = {f"{container_port}/tcp": None}
+        run_kwargs.update(self._optional_docker_kwargs(service))
 
         container = self._run_container(service.image, **run_kwargs)
         container.reload()
@@ -379,6 +381,20 @@ class DockerRuntimeController(RuntimeController):
         if not isinstance(raw, dict):
             return {}
         return {str(key): str(value) for key, value in raw.items()}
+
+    def _optional_docker_kwargs(self, service: ServiceDescriptor) -> dict[str, object]:
+        adapter_config = service.adapter_config if isinstance(service.adapter_config, dict) else {}
+        kwargs: dict[str, object] = {}
+        volumes = adapter_config.get("volumes")
+        if isinstance(volumes, dict):
+            kwargs["volumes"] = volumes
+        shm_size = adapter_config.get("shm_size")
+        if shm_size is not None:
+            kwargs["shm_size"] = shm_size
+        ipc_mode = adapter_config.get("ipc_mode")
+        if ipc_mode is not None:
+            kwargs["ipc_mode"] = ipc_mode
+        return kwargs
 
     def _device_requests(self, service: ServiceDescriptor) -> list[object] | None:
         if not service.gpu_required:
