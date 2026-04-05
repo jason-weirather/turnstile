@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -69,16 +70,23 @@ def _build_model_from_schema(name: str, schema: dict[str, Any]) -> type[BaseMode
     required = set(schema.get("required", []))
     properties = schema.get("properties", {})
     fields: dict[str, Any] = {}
+
     for field_name, field_schema in properties.items():
         annotation = _annotation_for_schema(field_schema)
         is_required = field_name in required
         default: Any
+
         if is_required:
             default = Field(...)
         else:
             annotation = annotation | None
-            default = None
+            if "default" in field_schema:
+                default = Field(default=copy.deepcopy(field_schema["default"]))
+            else:
+                default = None
+
         fields[field_name] = (annotation, default)
+
     return cast(type[BaseModel], create_model(name, **fields))
 
 

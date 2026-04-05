@@ -8,7 +8,7 @@ services:
       - TURNSTILE_DOCKER_NETWORK=turnstile
       - TURNSTILE_DOCKER_HOST=${DOCKER_HOST:-}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -54,7 +54,7 @@ services:
     env_file:
       - .env
     ports:
-      - "5555:5555"
+      - "127.0.0.1:5555:5555"
     networks:
       - turnstile
     depends_on:
@@ -64,7 +64,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - turnstile
 
