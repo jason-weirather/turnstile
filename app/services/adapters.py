@@ -53,8 +53,76 @@ class NoopStubAdapter:
             }
         )
 
-
 class HttpForwardJsonAdapter:
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[..., httpx.Client] = httpx.Client,
+        runtime_controller: RuntimeController | None = None,
+    ) -> None:
+        self._client_factory = client_factory
+        self._runtime = runtime_controller or get_runtime_controller()
+
+    def execute(
+        self,
+        capability: CapabilityDefinition,
+        service: ServiceDescriptor,
+        payload: dict[str, Any],
+        *,
+        job_id: str = "",
+    ) -> AdapterExecutionResult:
+        del capability
+        container_id: str | None = None
+        base_url = service.adapter_config.get("base_url")
+        if service.mode == ServiceMode.WARM and base_url is None:
+            warm_handle = self._runtime.ensure_warm_http_service(service)
+            container_id = warm_handle.container_id
+            base_url = warm_handle.base_url
+            get_job_store().attach_container(job_id, container_id)
+            get_job_store().touch_warm_service(service.service_id)
+            simulated = self._runtime.simulate_http_request(service, payload, job_id)
+            if simulated is not None:
+                return AdapterExecutionResult(
+                    result_payload=simulated,
+                    container_id=container_id,
+                )
+        elif isinstance(base_url, str):
+            base_url = str(base_url)
+        else:
+            raise RuntimeError(f"Warm HTTP service '{service.service_id}' is missing a base URL")
+
+        path = str(service.adapter_config.get("path", "/"))
+        method = str(service.adapter_config.get("method", "POST"))
+        timeout_s = float(service.adapter_config.get("timeout_s", 10.0))
+        headers = {"X-Turnstile-Job-Id": job_id}
+
+        outbound_payload = dict(payload)
+        extra_body = outbound_payload.pop("extra_body", None)
+        if extra_body is not None:
+            if not isinstance(extra_body, dict):
+                raise RuntimeError("extra_body must be an object")
+            outbound_payload = {**extra_body, **outbound_payload}
+
+        with self._client_factory(base_url=str(base_url), timeout=timeout_s) as client:
+            response = client.request(
+                method=method,
+                url=path,
+                json=outbound_payload,
+                headers=headers,
+            )
+
+        response.raise_for_status()
+        if service.mode == ServiceMode.WARM:
+            get_job_store().touch_warm_service(service.service_id)
+
+        result_payload: dict[str, Any]
+        if "application/json" in response.headers.get("content-type", ""):
+            result_payload = dict(response.json())
+        else:
+            result_payload = {"body": response.text}
+        return AdapterExecutionResult(result_payload=result_payload, container_id=container_id)
+
+class HttpForwardJsonAdapterDEPRICATED2:
     def execute(
         self,
         capability: CapabilityDefinition,
