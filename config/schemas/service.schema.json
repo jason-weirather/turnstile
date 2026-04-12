@@ -23,6 +23,10 @@
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
+    "selectors": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
     "mode": { "type": "string", "enum": ["warm", "ephemeral"] },
     "image": { "type": "string", "minLength": 1 },
     "gpu_required": { "type": "boolean" },

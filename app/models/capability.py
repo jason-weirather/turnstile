@@ -32,6 +32,7 @@ class CapabilityDefinition(BaseModel):
     queue_lane: QueueLane
     adapter_type: AdapterType
     default_service_selection: str
+    service_selection_field: str = "service_id"
     docs_examples: list[dict[str, Any]] = Field(default_factory=list)
 
 

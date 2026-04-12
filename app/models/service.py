@@ -14,6 +14,7 @@ class ServiceMode(StrEnum):
 class ServiceDescriptor(BaseModel):
     service_id: str
     capabilities: list[str]
+    selectors: dict[str, str] = Field(default_factory=dict)
     image: str
     mode: ServiceMode
     gpu_required: bool

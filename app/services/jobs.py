@@ -81,11 +81,13 @@ def _prepare_job_record(
     payload: dict[str, object],
 ) -> tuple[CapabilityDefinition, ServiceDescriptor, JobRecord]:
     capability = get_capability_registry().get(capability_id)
-    service_id = payload.get("service_id")
+    selector_field = capability.service_selection_field
+    selector_value = payload.get(selector_field)
     service = get_service_registry().resolve_for_capability(
         capability_id,
-        service_id if isinstance(service_id, str) else None,
+        selector_value if isinstance(selector_value, str) else None,
         capability.default_service_selection,
+        selector_field=selector_field,
     )
     job_id = str(uuid4())
     record = JobRecord(

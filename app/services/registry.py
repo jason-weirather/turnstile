@@ -18,13 +18,19 @@ class ServiceRegistry:
     def resolve_for_capability(
         self,
         capability: str,
-        service_id: str | None = None,
+        selector_value: str | None = None,
         default_service_id: str | None = None,
+        *,
+        selector_field: str = "service_id",
     ) -> ServiceDescriptor:
-        if service_id is not None:
-            service = self.get(service_id)
-            if service is None or capability not in service.capabilities:
-                raise KeyError(service_id)
+        if selector_value is not None:
+            service = self._resolve_selector_for_capability(
+                capability,
+                selector_field,
+                selector_value,
+            )
+            if service is None:
+                raise KeyError(selector_value)
             return service
 
         if default_service_id is not None:
@@ -37,6 +43,25 @@ class ServiceRegistry:
             if capability in service.capabilities:
                 return service
         raise KeyError(capability)
+
+    def _resolve_selector_for_capability(
+        self,
+        capability: str,
+        selector_field: str,
+        selector_value: str,
+    ) -> ServiceDescriptor | None:
+        if selector_field == "service_id":
+            service = self.get(selector_value)
+            if service is None or capability not in service.capabilities:
+                return None
+            return service
+
+        for service in self._services.values():
+            if capability not in service.capabilities:
+                continue
+            if service.selectors.get(selector_field) == selector_value:
+                return service
+        return None
 
 
 @lru_cache(maxsize=1)

@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models.capability import QueueLane
+from app.models.capability import AdapterType, CapabilityDefinition, ExecutionMode, QueueLane
 from app.models.job import JobRecord, JobStatus
+from app.models.service import ServiceDescriptor, ServiceMode
 from app.services import job_store as job_store_module
+from app.services import jobs as jobs_module
 from app.services import orchestrator
 from app.services.registry import get_service_registry
 
@@ -176,7 +179,7 @@ def test_failed_example_command_job_sets_failed_status(
     store = job_store_module.get_job_store()
     service = get_service_registry().resolve_for_capability(
         "example.command.run",
-        service_id="mock-command-alpha",
+        selector_value="mock-command-alpha",
     )
     job = JobRecord(
         job_id="job-fail",
@@ -212,3 +215,77 @@ def test_failed_example_command_job_sets_failed_status(
     assert failed_job is not None
     assert failed_job.status == JobStatus.FAILED
     assert failed_job.error_code == "execution_failed"
+
+
+def test_prepare_job_record_uses_model_selector_for_future_chat_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capability = CapabilityDefinition(
+        capability_id="openai.chat.completions",
+        method="POST",
+        path="/openai/chat/completions",
+        summary="OpenAI-compatible chat completions",
+        request_schema=Path("requests/chat_completions.request.json"),
+        response_schema=Path("responses/job_accepted.response.json"),
+        execution_mode=ExecutionMode.ASYNC,
+        queue_lane=QueueLane.CPU,
+        adapter_type=AdapterType.HTTP_FORWARD_JSON,
+        default_service_selection="gpt-5-4-service",
+        service_selection_field="model",
+    )
+    service = ServiceDescriptor(
+        service_id="gpt-5-4-service",
+        capabilities=["openai.chat.completions"],
+        selectors={"model": "gpt-5.4"},
+        image="ghcr.io/example/chat-backend:latest",
+        mode=ServiceMode.WARM,
+        gpu_required=False,
+        estimated_vram_mb=0,
+        startup_timeout_s=30,
+        idle_ttl_s=120,
+        adapter_type=AdapterType.HTTP_FORWARD_JSON,
+        adapter_config={},
+    )
+    captured: dict[str, object] = {}
+
+    class CapabilityRegistry:
+        def get(self, capability_id: str) -> CapabilityDefinition:
+            assert capability_id == "openai.chat.completions"
+            return capability
+
+    class ServiceRegistry:
+        def resolve_for_capability(
+            self,
+            capability_id: str,
+            selector_value: str | None = None,
+            default_service_id: str | None = None,
+            *,
+            selector_field: str = "service_id",
+        ) -> ServiceDescriptor:
+            captured["capability_id"] = capability_id
+            captured["selector_value"] = selector_value
+            captured["default_service_id"] = default_service_id
+            captured["selector_field"] = selector_field
+            return service
+
+    class JobStore:
+        def enqueue(self, record: JobRecord) -> None:
+            captured["record"] = record
+
+    monkeypatch.setattr(jobs_module, "get_capability_registry", lambda: CapabilityRegistry())
+    monkeypatch.setattr(jobs_module, "get_service_registry", lambda: ServiceRegistry())
+    monkeypatch.setattr(jobs_module, "get_job_store", lambda: JobStore())
+
+    _, resolved_service, record = jobs_module._prepare_job_record(
+        "openai.chat.completions",
+        {"model": "gpt-5.4", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert resolved_service == service
+    assert captured["capability_id"] == "openai.chat.completions"
+    assert captured["selector_field"] == "model"
+    assert captured["selector_value"] == "gpt-5.4"
+    assert captured["default_service_id"] == "gpt-5-4-service"
+    assert record.request_payload["model"] == "gpt-5.4"
+    assert record.requested_service_id == "gpt-5-4-service"
+    assert record.selected_service_id == "gpt-5-4-service"

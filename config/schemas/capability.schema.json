@@ -28,6 +28,7 @@
       "enum": ["noop_stub", "http_forward_json", "container_command"]
     },
     "default_service_selection": { "type": "string", "minLength": 1 },
+    "service_selection_field": { "type": "string", "minLength": 1 },
     "docs_examples": {
       "type": "array",
       "items": { "type": "object" }

@@ -282,6 +282,7 @@ execution_mode: async
 queue_lane: cpu
 adapter_type: http_forward_json
 default_service_selection: summarizer-service
+service_selection_field: model
 ```
 
 ```yaml
@@ -289,6 +290,8 @@ default_service_selection: summarizer-service
 service_id: summarizer-service
 capabilities:
   - text.summarize
+selectors:
+  model: gpt-5.4
 mode: warm
 image: ghcr.io/example/summarizer:latest
 gpu_required: false
@@ -304,6 +307,8 @@ adapter_config:
   path: /summaries
   method: POST
 ```
+
+That keeps the internal service inventory keyed by `service_id`, while letting a public OpenAI-style capability route backend choice through `model`.
 
 Ephemeral command capability/service example:
 
