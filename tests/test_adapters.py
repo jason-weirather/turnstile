@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
@@ -90,6 +91,62 @@ def test_http_forward_json_adapter_normalizes_response() -> None:
     result = adapter.execute(capability, service, {"prompt": "test"}, job_id="job-1")
 
     assert result.result_payload == {"ok": True, "backend": "warm-http"}
+
+
+def test_http_forward_json_adapter_merges_default_body_and_request_payload() -> None:
+    capability = CapabilityDefinition(
+        capability_id="image.multiple-scene-angles.edit",
+        method="POST",
+        path="/image/multiple-scene-angles/edit",
+        summary="Generate multiple scene angles",
+        request_schema=Path("request.json"),
+        response_schema=Path("response.json"),
+        execution_mode=ExecutionMode.ASYNC,
+        queue_lane=QueueLane.GPU,
+        adapter_type=AdapterType.HTTP_FORWARD_JSON,
+        default_service_selection="comfy-multiple-scene-angles-edit",
+    )
+    service = ServiceDescriptor(
+        service_id="comfy-multiple-scene-angles-edit",
+        capabilities=["image.multiple-scene-angles.edit"],
+        image="comfyui-api:local",
+        mode=ServiceMode.WARM,
+        gpu_required=True,
+        estimated_vram_mb=24000,
+        startup_timeout_s=30,
+        idle_ttl_s=300,
+        adapter_type=AdapterType.HTTP_FORWARD_JSON,
+        adapter_config={
+            "base_url": "https://example.test",
+            "path": "/v1/jobs/image-edit?wait=true",
+            "default_body": {
+                "workflow_id": "qwen-one-click-multiple-scene-angles-1.0",
+                "steps": 4,
+            },
+        },
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        assert body["workflow_id"] == "qwen-one-click-multiple-scene-angles-1.0"
+        assert body["image1_base64"] == "abc123"
+        assert body["steps"] == 8
+        return httpx.Response(200, json={"ok": True, "images": []})
+
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(**_: object) -> httpx.Client:
+        return httpx.Client(transport=transport, base_url="https://example.test", timeout=10.0)
+
+    adapter = HttpForwardJsonAdapter(client_factory=client_factory)
+    result = adapter.execute(
+        capability,
+        service,
+        {"image1_base64": "abc123", "steps": 8},
+        job_id="job-merge",
+    )
+
+    assert result.result_payload == {"ok": True, "images": []}
 
 
 def test_container_command_adapter_normalizes_runtime_result() -> None:

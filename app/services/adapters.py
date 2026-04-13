@@ -96,12 +96,26 @@ class HttpForwardJsonAdapter:
         timeout_s = float(service.adapter_config.get("timeout_s", 10.0))
         headers = {"X-Turnstile-Job-Id": job_id}
 
-        outbound_payload = dict(payload)
-        extra_body = outbound_payload.pop("extra_body", None)
+        raw_payload = dict(payload)
+        extra_body = raw_payload.pop("extra_body", None)
+
+        default_body = service.adapter_config.get("default_body", {})
+        if default_body is None:
+            default_body = {}
+        if not isinstance(default_body, dict):
+            raise RuntimeError("adapter_config.default_body must be an object")
+
+        outbound_payload = dict(default_body)
+
+
         if extra_body is not None:
             if not isinstance(extra_body, dict):
                 raise RuntimeError("extra_body must be an object")
-            outbound_payload = {**extra_body, **outbound_payload}
+            outbound_payload.update(extra_body)
+
+        # Explicit top-level request fields win over service defaults.
+        outbound_payload.update(raw_payload)
+
 
         with self._client_factory(base_url=str(base_url), timeout=timeout_s) as client:
             response = client.request(
